@@ -60,7 +60,8 @@ class Booking extends Model  {
                             'rupees',
                             'checked',
                             'indian', 
-                            'take_away'
+                            'take_away',
+                            'chiet_khau'
                             ];
     public static function getList($params = []){
         $query = self::where('status', 1);
