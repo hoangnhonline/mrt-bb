@@ -110,6 +110,7 @@
             </li>
             @endforeach
           </ul>
+          @include('booking.partials.price-warning')
           @if($item->notes)<div class="bk-note" style="font-style:italic;margin:4px 0">{!! nl2br(e($item->notes)) !!}</div>@endif
           <table class="bk-m-money">
             <tr><td>{{ __('Tổng') }}</td><td>{{ number_format($item->total_price) }}</td></tr>

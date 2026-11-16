@@ -13,6 +13,8 @@ use Helper, File, Session, Auth;
 
 class DishController extends Controller
 {
+    const PRICE_MSG = 'Giá món ăn đang dưới 1.000đ — nhập sai. Bạn phải kiểm tra lại và thêm 000 cho đúng (ví dụ: 80 → 80,000).';
+
     /**
     * Display a listing of the resource.
     *
@@ -54,6 +56,12 @@ class DishController extends Controller
         $id = $request->id;
         $column = $request->col;
         $value = $request->value;
+        if ($column === 'price') {
+            $value = str_replace(",", "", (string) $value);
+            if (!is_numeric($value) || $value < 1000) {
+                return response()->json(['error' => self::PRICE_MSG], 422);
+            }
+        }
         $model = Dish::find($id);
         $model->update([$column => $value]);
     }
@@ -83,13 +91,17 @@ class DishController extends Controller
     {
         $dataArr = $request->all();
         
+        // Chặn giá < 1.000đ (nhập thiếu 000)
+        $request->merge(['price' => str_replace(",", "", (string) $request->price)]);
         $this->validate($request,[
             'name' => 'required',
-            'price' => 'required'       
+            'price' => 'required|numeric|min:1000'
         ],
         [
             'name.required' => 'Please fill name',            
             'price.required' => 'Please fill price',            
+            'price.numeric' => self::PRICE_MSG,
+            'price.min' => self::PRICE_MSG,
         ]);
         
         $dataArr['price'] = str_replace(",", "", $dataArr['price']);
@@ -155,13 +167,17 @@ class DishController extends Controller
     {
         $dataArr = $request->all();
         
+        // Chặn giá < 1.000đ (nhập thiếu 000)
+        $request->merge(['price' => str_replace(",", "", (string) $request->price)]);
         $this->validate($request,[
             'name' => 'required',
-            'price' => 'required'       
+            'price' => 'required|numeric|min:1000'
         ],
         [
             'name.required' => 'Please fill name',            
             'price.required' => 'Please fill price',            
+            'price.numeric' => self::PRICE_MSG,
+            'price.min' => self::PRICE_MSG,
         ]);
         if($dataArr['image_url'] && $dataArr['image_name']){
 

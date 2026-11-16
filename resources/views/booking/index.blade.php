@@ -142,6 +142,7 @@
                     </li>
                     @endforeach
                   </ul>
+                  @include('booking.partials.price-warning')
                   @if($item->notes)<div class="bk-note" style="font-style:italic">{!! nl2br(e($item->notes)) !!}</div>@endif
                   @if($item->sms_thu)<div class="text-success" style="font-size:12px">SMS: {{ $item->sms_thu }}</div>@endif
                 </td>

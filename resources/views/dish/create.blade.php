@@ -120,6 +120,17 @@
 <script type="text/javascript">
   
   $(document).ready(function(){
+    // Chặn lưu nếu giá món < 1.000đ (nhập thiếu 000)
+    $('#dataForm').on('submit', function(e){
+      var p = parseInt(($('#price').val() || '').replace(/[^0-9]/g, ''), 10);
+      if (!p || p < 1000) {
+        e.preventDefault();
+        alert('Giá món ăn đang dưới 1.000đ — nhập sai. Bạn phải kiểm tra lại và thêm 000 cho đúng (ví dụ: 80 → 80,000).');
+        $('#price').focus();
+        return false;
+      }
+    });
+
     $('#btnUploadImage').click(function(){        
         $('#file-image').click();
       });      

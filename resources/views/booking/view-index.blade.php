@@ -152,6 +152,7 @@
                      <td width="30%" class="text-right">{{ number_format($dishs->total_price) }}</td>
                    </tr>
                    @endforeach                  
+                    @include('booking.partials.price-warning')
                     @if($item->notes)
                     <div class="clearfix"><span style="color:red; font-style: italic;">{!! nl2br($item->notes) !!}</span></div>
                     @endif
