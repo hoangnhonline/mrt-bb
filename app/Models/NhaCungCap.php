@@ -5,6 +5,8 @@ use Illuminate\Database\Eloquent\Model;
 
 
 class NhaCungCap extends Model  {
+    use \App\Traits\LogsActivity;
+
 
 	/**
 	 * The database table used by the model.
@@ -24,6 +26,6 @@ class NhaCungCap extends Model  {
      *
      * @var array
      */
-    protected $fillable = ['name', 'status'];
+    protected $fillable = ['name', 'group_name', 'phone', 'address', 'contact_name', 'notes', 'display_order', 'status'];
     
 }

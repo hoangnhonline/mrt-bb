@@ -5,6 +5,9 @@ use Illuminate\Database\Eloquent\Model;
 
 
 class Account extends Model  {
+    use \App\Traits\LogsActivity;
+    protected static $logIgnore = ['last_login', 'last_login_at'];
+
 
 	/**
 	 * The database table used by the model.
@@ -24,7 +27,7 @@ class Account extends Model  {
      *
      * @var array
      */
-    protected $fillable = ['name', 'email', 'password', 'status', 'changed_password', 'remember_token', 'role',  'created_user', 'updated_user', 'phone', 'user_type', 'phone', 'code', 'level','city_id','is_staff','birthday','image_url','is_leader', 'is_partner','department_id','date_join','salary', 'status', 'user_id_manage', 'debt_type'];
+    protected $fillable = ['name', 'email', 'password', 'status', 'changed_password', 'remember_token', 'role',  'created_user', 'updated_user', 'phone', 'user_type', 'phone', 'code', 'level','city_id','is_staff','birthday','image_url','is_leader', 'is_partner','department_id','date_join','salary', 'status', 'user_id_manage', 'debt_type', 'is_view', 'role_id'];
 
     public function articles()
     {

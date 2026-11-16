@@ -56,20 +56,22 @@
                   <label>TABLE NO</label>
                   <input type="text" class="form-control" name="table_no" id="table_no" value="{{ old('table_no') }}" autocomplete="off">
                 </div>
-                 <div class="form-group col-md-4 col-xs-4" style="display: none;">
+                  <div class="form-group col-md-4 col-xs-4">
+                  @php
+                  $branch_id = old('branch_id', Auth::user->branch_id);
+                  @endphp
                    <label>Branch</label>
                       <select name="branch_id" id="branch_id" class="form-control select2">
                         @foreach($branchList as $beach)
-                        <option value="{{ $beach->id }}" {{ old('branch_id', 7) == $beach->id ? "selected" : "" }}>{{ $beach->name }}</option>
-                        @endforeach
-                        
+                        <option value="{{ $beach->id }}" {{ $branch_id == $beach->id ? "selected" : "" }}>{{ $beach->name }}</option>
+                        @endforeach                        
                       </select>
                  </div>
                 <div class="form-group col-md-4 col-xs-4">
                   <label>Dining date <span class="red-star">*</span></label>
                   <input type="text" class="form-control datepicker" name="use_date" id="use_date" value="{{ old('use_date', $use_date) }}" autocomplete="off">
                 </div>
-                   <div class="form-group col-md-4 col-xs-4">
+                   <div class="form-group col-md-4 col-xs-4" style="display: none;">
                   <label>Bill No</label>
                   <input type="text" class="form-control" name="bill_no" id="bill_no" value="{{ old('bill_no', $bill) }}" autocomplete="off">
                 </div>

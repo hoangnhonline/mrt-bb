@@ -1,0 +1,107 @@
+@php
+  $bk = $detail ?? null;
+  $dtId = old('doi_tac_id', $bk->doi_tac_id ?? '');
+  $dtCk = old('co_chiet_khau', $bk->co_chiet_khau ?? 0);
+  $dtNo = old('ghi_no', $bk->ghi_no ?? 0);
+  $dtPct = old('com_pct', isset($bk->com_pct) && $bk->com_pct !== null ? rtrim(rtrim(number_format($bk->com_pct, 2, '.', ''), '0'), '.') : '');
+  $dtManual = old('com_manual_flag') ? old('com_manual') : (isset($bk->com_manual) && $bk->com_manual !== null ? number_format($bk->com_manual) : '');
+  $dtManualFlag = old('com_manual_flag', isset($bk->com_manual) && $bk->com_manual !== null ? 1 : 0);
+  $dtAuto = isset($bk->com_amount) ? number_format((int) $bk->com_amount) : '';
+  $dtTypes = array_map('__', \App\Models\Partner::$doiTacTypes);
+@endphp
+<input type="hidden" name="doi_tac_form" value="1">
+<div class="row" id="doi-tac-box" style="background:#f4f8fb;border:1px solid #d6e4f0;margin:5px 0 12px;padding-top:10px">
+  <div class="form-group col-md-5 col-xs-12">
+    <label>{{ __('Đối tác') }}</label>
+    <select class="form-control select2" name="doi_tac_id" id="doi_tac_id" style="width:100%">
+      <option value="">{{ __('— Khách lẻ —') }}</option>
+      @foreach(($doiTacList ?? []) as $dt)
+      <option value="{{ $dt->id }}" {{ $dtId == $dt->id ? 'selected' : '' }}
+        data-buffet="{{ (int) $dt->com_buffet_per_pax }}" data-pct="{{ (float) $dt->com_alacarte_pct }}" data-nodebt="{{ \App\Models\Partner::isNoDebtType($dt->type) ? 1 : 0 }}">
+        {{ $dt->name }} ({{ $dtTypes[$dt->type] ?? $dt->type }})
+      </option>
+      @endforeach
+    </select>
+  </div>
+  <div class="form-group col-md-3 col-xs-6 dt-opt dt-ck-wrap" style="padding-top:25px">
+    <span class="dt-ck-fixed" style="display:none;color:#3c763d;font-weight:bold"><i class="fa fa-check"></i> {{ __('Luôn có chiết khấu (HDV / tài xế)') }}</span>
+    <label class="dt-ck-label" style="font-weight:normal;cursor:pointer"><input type="checkbox" name="co_chiet_khau" id="co_chiet_khau" value="1" {{ $dtCk ? 'checked' : '' }}> {{ __('Có chiết khấu (tính hoa hồng)') }}</label>
+  </div>
+  <div class="form-group col-md-2 col-xs-6 dt-opt dt-pct">
+    <label>{{ __('% hoa hồng alacarte') }}</label>
+    <div class="input-group input-group-sm">
+      <input type="text" name="com_pct" id="com_pct" class="form-control" value="{{ $dtPct }}" placeholder="{{ __('theo đối tác') }}" autocomplete="off">
+      <span class="input-group-addon">%</span>
+    </div>
+  </div>
+  <div class="form-group col-md-2 col-xs-6 dt-opt dt-pct">
+    <label>{{ __('Tiền chiết khấu') }} <a href="#" id="com_reset" title="{{ __('Tự tính lại') }}" style="font-weight:normal;font-size:12px;{{ $dtManualFlag ? '' : 'display:none' }}"><i class="fa fa-refresh"></i> {{ __('Tự tính lại') }}</a></label>
+    <input type="hidden" name="com_manual_flag" id="com_manual_flag" value="{{ $dtManualFlag ? 1 : 0 }}">
+    <input type="text" name="com_manual" id="com_manual" class="form-control input-sm number" value="{{ $dtManualFlag ? $dtManual : $dtAuto }}" autocomplete="off">
+    <small id="com_manual_hint" class="text-muted">{{ $dtManualFlag ? __('Đã sửa tay') : __('Tự tính') }}</small>
+  </div>
+  <div class="form-group col-md-2 col-xs-6 dt-opt dt-ghino" style="padding-top:25px">
+    <label style="font-weight:normal;cursor:pointer"><input type="checkbox" name="ghi_no" id="ghi_no" value="1" {{ $dtNo ? 'checked' : '' }}> {{ __('Ghi nợ (đối tác trả sau)') }}</label>
+  </div>
+  <div class="col-xs-12 dt-opt" style="padding-bottom:8px">
+    <span id="dt-preview" style="color:#31708f"></span>
+  </div>
+</div>
+<script>
+(function(){
+  function fmt(n){ return (Math.round(n)||0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  function num(v){ return parseInt(String(v||'0').replace(/,/g,''),10)||0; }
+  window.dtPreview = function(){
+    var $ = window.jQuery; if(!$) return;
+    var opt = $('#doi_tac_id option:selected');
+    var has = !!$('#doi_tac_id').val();
+    $('.dt-opt').toggle(has);
+    if(!has){ $('#dt-preview').text(''); return; }
+    // HDV / tài xế: luôn có chiết khấu, không ghi nợ => ẩn 2 ô tick
+    var noDebt = opt.data('nodebt') == 1;
+    if(noDebt){ $('#co_chiet_khau').prop('checked', true); $('#ghi_no').prop('checked', false); }
+    $('.dt-ck-label').toggle(!noDebt); $('.dt-ck-fixed').toggle(noDebt); $('.dt-ghino').toggle(!noDebt);
+    $('.dt-pct').toggle($('#co_chiet_khau').is(':checked'));
+    // ô % để trống = theo % của đối tác
+    $('#com_pct').attr('placeholder', opt.data('pct') + '% (' + {!! json_encode(__('theo đối tác')) !!} + ')');
+    var pctIn = String($('#com_pct').val() || '').replace(',', '.');
+    var pct = pctIn !== '' && !isNaN(parseFloat(pctIn)) ? parseFloat(pctIn) : parseFloat(opt.data('pct'));
+    var pax = 0;
+    $('.services').each(function(){
+      var r = $(this), t = (r.find('.cate option:selected').text()||'').toUpperCase();
+      var nm = $.trim(t).replace(/^\d+\s*(-\s*)?/, ''); // "12 - BUFFET..." hoặc "12 BUFFET ... - giá"
+      if(nm.indexOf('BUFFET') === 0 && r.find('.cate').val()){ pax += num(r.find('.amount').val()); }
+    });
+    var net = Math.max(0, num($('#total_price').val()) - num($('#discount').val()));
+    var txt = '', autoCom = 0;
+    if($('#co_chiet_khau').is(':checked')) autoCom = pax > 0 ? pax*opt.data('buffet') : Math.round(net*pct/100);
+    // ô Tiền chiết khấu: chưa sửa tay thì luôn hiện số tự tính
+    if($('#com_manual_flag').val() != '1') $('#com_manual').val(fmt(autoCom));
+    if(!$('#co_chiet_khau').is(':checked')){
+      txt = {!! json_encode(__('Không tính hoa hồng (chưa tick "Có chiết khấu").')) !!};
+    }else if(pax > 0){
+      txt = {!! json_encode(__('Bill BUFFET – hoa hồng dự kiến')) !!} + ': ' + pax + ' ' + {!! json_encode(__('khách')) !!} + ' × ' + fmt(opt.data('buffet')) + ' = ' + fmt(pax*opt.data('buffet')) + ' đ';
+    }else{
+      txt = {!! json_encode(__('Bill ALACARTE – hoa hồng dự kiến')) !!} + ': ' + pct + '% × ' + fmt(net) + ' = ' + fmt(net*pct/100) + ' đ';
+    }
+    if($('#co_chiet_khau').is(':checked') && $('#com_manual_flag').val() == '1') txt += ' → ' + {!! json_encode(__('dùng số sửa tay')) !!} + ': ' + $('#com_manual').val() + ' đ';
+    if($('#ghi_no').is(':checked')) txt += ' | ' + {!! json_encode(__('Ghi nợ')) !!} + ': ' + fmt(net) + ' đ';
+    $('#dt-preview').text(txt);
+  };
+  function bind(){
+    var $ = window.jQuery; if(!$){ return setTimeout(bind, 200); }
+    $(document).on('change', '#doi_tac_id, #co_chiet_khau, #ghi_no, .cate, .amount', function(){ setTimeout(dtPreview, 50); });
+    $(document).on('keyup change', '#discount, #total_price, #com_pct', function(){ setTimeout(dtPreview, 50); });
+    // người dùng gõ vào ô Tiền chiết khấu => chuyển sang sửa tay
+    $(document).on('input', '#com_manual', function(){
+      $('#com_manual_flag').val('1'); $('#com_reset').show(); $('#com_manual_hint').text({!! json_encode(__('Đã sửa tay')) !!});
+      var v = num($(this).val()); $(this).val(v ? fmt(v) : ''); setTimeout(dtPreview, 50);
+    });
+    $(document).on('click', '#com_reset', function(e){
+      e.preventDefault(); $('#com_manual_flag').val('0'); $(this).hide(); $('#com_manual_hint').text({!! json_encode(__('Tự tính')) !!}); dtPreview();
+    });
+    $(dtPreview);
+  }
+  bind();
+})();
+</script>

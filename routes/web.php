@@ -35,7 +35,6 @@ Route::get('zalo', ['uses' => 'ZaloController@zalo', 'as' => 'zalo']);
 Route::get('zalo2', ['uses' => 'ZaloController@zalo2', 'as' => 'zalo2']);
 Route::get('reset-pass', ['uses' => 'AccountController@resetPass', 'as' => 'resetPass']);
 Route::get('/change-value-chung', ['as' => 'change-value-by-column-chung', 'uses' => 'GeneralController@changeValueByColumnChung']);
-Route::get('/report/dish', ['as' => 'report.dish', 'uses' => 'ReportController@dishReport']);
 
 Route::post('api-sms-payment', ['uses' => 'BookingController@smsPayment', 'as' => 'api-sms-payment']);
 Route::group(['prefix' => 'report-guest'], function () {  
@@ -84,6 +83,40 @@ Route::group([
         Route::post('/update', ['as' => 'partner.update', 'uses' => 'PartnerController@update']);
         Route::get('{id}/destroy', ['as' => 'partner.destroy', 'uses' => 'PartnerController@destroy']);
         Route::get('/change-value', ['as' => 'partner.change-value-by-column', 'uses' => 'PartnerController@changeValueByColumn']);  
+    });
+    Route::post('/filter-prefs/save', ['as' => 'filter-prefs.save', 'uses' => 'FilterPrefController@save']); // bộ lọc tùy chọn theo user
+    Route::get('/locale/{lang}', ['as' => 'locale.change', 'uses' => 'LocaleController@change']); // đa ngôn ngữ VI/EN
+    // Tổng quan & bill bất thường (14/11/2026)
+    Route::get('/tong-quan', ['as' => 'tong-quan.index', 'uses' => 'OverviewController@index']);
+    Route::get('/bill-bat-thuong', ['as' => 'bill-anomaly.index', 'uses' => 'BillAnomalyController@index']);
+    Route::post('/bill-bat-thuong/review', ['as' => 'bill-anomaly.review', 'uses' => 'BillAnomalyController@review']);
+    // Phân quyền (chỉ tài khoản quản trị chính)
+    Route::group(['prefix' => 'phan-quyen'], function () {
+        Route::get('/', ['as' => 'phan-quyen.index', 'uses' => 'RoleController@index']);
+        Route::get('/create', ['as' => 'phan-quyen.create', 'uses' => 'RoleController@create']);
+        Route::get('/{id}/edit', ['as' => 'phan-quyen.edit', 'uses' => 'RoleController@edit'])->where('id', '[0-9]+');
+        Route::post('/save', ['as' => 'phan-quyen.save', 'uses' => 'RoleController@save']);
+        Route::get('/{id}/destroy', ['as' => 'phan-quyen.destroy', 'uses' => 'RoleController@destroy'])->where('id', '[0-9]+');
+        Route::get('/users', ['as' => 'phan-quyen.users', 'uses' => 'RoleController@users']);
+        Route::post('/users/save', ['as' => 'phan-quyen.user-save', 'uses' => 'RoleController@saveUser']);
+        Route::get('/users/{id}/check', ['as' => 'phan-quyen.check', 'uses' => 'RoleController@check'])->where('id', '[0-9]+');
+    });
+    Route::get('/activity-log', ['as' => 'activity-log.index', 'uses' => 'ActivityLogController@index']); // lịch sử thao tác (chỉ id 1)
+    // Đối tác bán hàng & công nợ (14/11/2026)
+    Route::group(['prefix' => 'doi-tac'], function () {
+        Route::get('/', ['as' => 'doi-tac.index', 'uses' => 'DoiTacController@index']);
+        Route::get('/report', ['as' => 'doi-tac.report', 'uses' => 'DoiTacController@report']);
+        Route::get('/create', ['as' => 'doi-tac.create', 'uses' => 'DoiTacController@create']);
+        Route::post('/store', ['as' => 'doi-tac.store', 'uses' => 'DoiTacController@store']);
+        Route::post('/update', ['as' => 'doi-tac.update', 'uses' => 'DoiTacController@update']);
+        Route::post('/settings', ['as' => 'doi-tac.settings', 'uses' => 'DoiTacController@saveSettings']);
+        Route::get('/transaction/{tid}/cancel', ['as' => 'doi-tac.transaction.cancel', 'uses' => 'DoiTacController@cancelTransaction'])->where('tid', '[0-9]+');
+        Route::get('/{id}', ['as' => 'doi-tac.show', 'uses' => 'DoiTacController@show'])->where('id', '[0-9]+');
+        Route::get('/{id}/edit', ['as' => 'doi-tac.edit', 'uses' => 'DoiTacController@edit'])->where('id', '[0-9]+');
+        Route::get('/{id}/destroy', ['as' => 'doi-tac.destroy', 'uses' => 'DoiTacController@destroy'])->where('id', '[0-9]+');
+        Route::get('/{id}/recalc', ['as' => 'doi-tac.recalc', 'uses' => 'DoiTacController@recalc'])->where('id', '[0-9]+');
+        Route::get('/{id}/export', ['as' => 'doi-tac.export', 'uses' => 'DoiTacController@export'])->where('id', '[0-9]+');
+        Route::post('/{id}/transaction', ['as' => 'doi-tac.transaction.store', 'uses' => 'DoiTacController@storeTransaction'])->where('id', '[0-9]+');
     });
     Route::group(['prefix' => 'revenue'], function () {        
         Route::get('/', ['as' => 'revenue.index', 'uses' => 'RevenueController@index']);      
@@ -193,9 +226,14 @@ Route::group([
     });
     Route::group(['prefix' => 'report'], function () {  
         Route::get('/chi-phi', ['as' => 'report.chi-phi', 'uses' => 'ReportController@chiphi']);
+        Route::get('/dish', ['as' => 'report.dish', 'uses' => 'ReportController@dishReport']);
+        Route::get('/vat', ['as' => 'report.vat', 'uses' => 'VatReportController@index']);
+        Route::get('/thu-tien-nguoi', ['as' => 'report.thu-tien-nguoi', 'uses' => 'ThuTienReportController@index']);
+        Route::post('/vat/no-vat', ['as' => 'report.vat.no-vat', 'uses' => 'VatReportController@setNoVat']);
+        Route::get('/chi-phi-doanh-thu', ['as' => 'report.chi-phi-doanh-thu', 'uses' => 'ReportController@chiPhiDoanhThu']);
         Route::get('/customer-by-level', ['as' => 'report.customer-by-level', 'uses' => 'ReportController@customerByLevel']);
+        Route::get('/doanh-thu-thang', ['as' => 'report.doanh-thu-thang', 'uses' => 'MonthlyReportController@index']);
         Route::get('/doanh-thu', ['as' => 'report.doanh-thu', 'uses' => 'ReportController@doanhthuview']);
-        Route::get('/doanh-thu-thang', ['as' => 'report.doanh-thu-thang', 'uses' => 'ReportController@doanhthuthang']);
         Route::get('/doanh-thu-thang-2', ['as' => 'report.doanh-thu-thang-2', 'uses' => 'ReportController@doanhthuthang2']);
         Route::get('/loi-nhuan', ['as' => 'report.loi-nhuan', 'uses' => 'ReportController@loiNhuan']);
         Route::get('/doanh-thu-thang-new', ['as' => 'report.doanh-thu-thang-new', 'uses' => 'ReportController@doanhthuthangNew']);
@@ -431,7 +469,9 @@ Route::group([
     });  
     Route::group(['prefix' => 'cost'], function () {        
         Route::get('/', ['as' => 'cost.index', 'uses' => 'CostController@index']);
-        Route::get('/cal', ['as' => 'cost.cal', 'uses' => 'CostController@cal']);
+        Route::get('/nhap-hang', ['as' => 'cost.nhap-hang', 'uses' => 'CostController@nhapHang']);
+        Route::get('/bieu-do-gia', ['as' => 'cost.bieu-do-gia', 'uses' => 'CostController@bieuDoGia']);
+        Route::get('/canh-bao-nhap', ['as' => 'cost.canh-bao-nhap', 'uses' => 'PurchaseAlertController@index']); // cảnh báo nhập tăng bất thường
         Route::get('/export', ['as' => 'cost.export', 'uses' => 'CostController@export']);
         Route::get('/ajax-doi-tac', ['as' => 'cost.ajax-doi-tac', 'uses' => 'CostController@ajaxDoiTac']);
         Route::get('/image', ['as' => 'cost.image', 'uses' => 'CostController@image']);
@@ -445,6 +485,15 @@ Route::group([
         Route::get('{id}/destroy', ['as' => 'cost.destroy', 'uses' => 'CostController@destroy']);  
         Route::get('/change-value', ['as' => 'cost.change-value-by-column', 'uses' => 'CostController@changeValueByColumn']);
         Route::get('/ajax-cost-type', ['as' => 'cost.ajax-cost-type', 'uses' => 'CostController@ajaxGetCostType']);
+        // API nhập chi phí nhanh (Claude gọi từ trình duyệt đã đăng nhập)
+        Route::get('/api/master-data', ['as' => 'cost.api.master-data', 'uses' => 'CostApiController@masterData']);
+        Route::post('/api/check-duplicate', ['as' => 'cost.api.check-duplicate', 'uses' => 'CostApiController@checkDuplicate']);
+        Route::post('/api/store-batch', ['as' => 'cost.api.store-batch', 'uses' => 'CostApiController@storeBatch']);
+        Route::get('/bill-upload', ['as' => 'cost.bill-upload', 'uses' => 'CostApiController@billUpload']);
+        Route::post('/api/upload-bill', ['as' => 'cost.api.upload-bill', 'uses' => 'CostApiController@uploadBill']);
+        Route::get('/api/inbox', ['as' => 'cost.api.inbox', 'uses' => 'CostApiController@inbox']);
+        Route::post('/api/inbox-delete', ['as' => 'cost.api.inbox-delete', 'uses' => 'CostApiController@inboxDelete']);
+        Route::post('/api/inbox-delete-all', ['as' => 'cost.api.inbox-delete-all', 'uses' => 'CostApiController@inboxDeleteAll']);
     }); 
     Route::group(['prefix' => 'grandworld-schedule'], function () {        
         Route::get('/', ['as' => 'grandworld-schedule.index', 'uses' => 'GrandworldScheduleController@index']);

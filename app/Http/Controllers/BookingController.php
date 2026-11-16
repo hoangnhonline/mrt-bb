@@ -16,6 +16,8 @@ use App\Models\Account;
 use App\Models\Cost;
 use App\Models\Branch;
 use App\Models\Dish;
+use App\Models\Partner;
+use App\Services\PartnerDebtService;
 use App\User;
 use App\Models\Settings;
 use Helper, File, Session, Auth, Image, Hash;
@@ -605,6 +607,7 @@ class BookingController extends Controller
         $arrSearch['branch_ids'] = $branch_ids = $request->branch_ids ? $request->branch_ids : [];      
         $arrSearch['nguoi_tu_van'] = $nguoi_tu_van = $request->nguoi_tu_van ?? null;
         $arrSearch['partner_id'] = $partner_id = $request->partner_id ?? null;
+        $arrSearch['doi_tac'] = $doi_tac = $request->doi_tac ?? null; // '' tất cả | 'le' khách lẻ | 'all' mọi đối tác | id
         $arrSearch['hdv_id'] = $hdv_id = $request->hdv_id ?? null;
         $arrSearch['phone'] = $phone = $request->phone ? $request->phone : null;
         $arrSearch['not_john'] = $not_john = $request->not_john ?? null;
@@ -630,7 +633,9 @@ class BookingController extends Controller
         $arrSearch['created_at'] = $created_at = $request->created_at ? $request->created_at :  null;
         
         
-        $query = Booking::where('city_id', 1);             
+        $query = Booking::where('city_id', 1);
+        // giới hạn chi nhánh theo phân quyền cho mọi kiểu tìm (cả tìm theo mã bill / SĐT)
+        if (($permBranchIds = \App\Services\Perm::branchIds()) !== null) $query->whereIn('branch_id', $permBranchIds ?: [0]);             
 
         if($keyword){
             if(strlen($keyword) <= 8){
@@ -702,7 +707,13 @@ class BookingController extends Controller
             if($partner_id){
                 $query->where('partner_id', $partner_id);
             }
-           
+            if($doi_tac === 'le'){
+                $query->whereNull('doi_tac_id');
+            }elseif($doi_tac === 'all'){
+                $query->whereNotNull('doi_tac_id');
+            }elseif($doi_tac > 0){
+                $query->where('doi_tac_id', (int) $doi_tac);
+            }
             $isView = Auth::user()->is_view == 1 ? true: false;
             if($isView){
                 $query->where('branch_id', Auth::user()->branch_id);
@@ -711,6 +722,7 @@ class BookingController extends Controller
                   $query->whereIn('branch_id', $branch_ids);
                 }    
             }
+            
 
             if($nguoi_thu_tien){
                 $query->where('nguoi_thu_tien', $nguoi_thu_tien);
@@ -836,10 +848,14 @@ class BookingController extends Controller
         $arrHoahong = [];
         $arrTongTienKhongCam = [];
         $totalRevenue = 0;
+        $totalRevenueKoGiam = 0;
         $totalRupees = 0;
         $totalDrinks = 0;
-        $totalRevenueKoGiam = 0;
+        $totalVat = 0; $totalCom = 0; $totalNet = 0; // VAT + hoa hồng đối tác (14/11/2026)
         foreach($allList as $item){
+            $totalNet += $item->total_price - $item->discount;
+            $totalVat += \App\Services\AppSetting::vatOf($item->total_price, $item->discount, $item->no_vat, $item->branch_id);
+            $totalCom += (int) $item->com_amount;
             $totalRevenueKoGiam+= $item->total_price;
             $totalRevenue+= $item->con_lai;
             $totalRupees+= $item->rupees;
@@ -887,16 +903,19 @@ class BookingController extends Controller
 
       //  dd($arrData['chup_anh']);
         $agent = new Agent();
-        if($agent->isMobile()){            
-            $view = $isView == true ? 'booking.view-m-index' : 'booking.m-index';
-        }else{
-            $view = $isView == true ? 'booking.view-index' :'booking.index';
-        }      
+        
+            if($agent->isMobile()){            
+                $view = $isView == true ? 'booking.view-m-index' : 'booking.m-index';
+            }else{
+                $view = $isView == true ? 'booking.view-index' :'booking.index';
+            }
+        
        
         
         $cateList = Dish::orderBy('display_order')->get();                
         $branchList = Branch::where('status', 1)->orderBy('display_order')->get();
         $partners = Account::where('is_partner', 1)->get();        
+        $doiTacList = Partner::doiTacList();
         
         $beachArr = [];
         foreach($branchList as $beach){
@@ -908,7 +927,7 @@ class BookingController extends Controller
         }
         
       
-        return view($view, compact( 'items', 'arrSearch', 'keyword', 'time_type', 'month', 'year', 'month_do', 'arrData', 'chietkhauList', 'branch_id', 'cateList', 'use_date_from_format', 'use_date_to_format', 'branchList', 'beachArr', 'partners', 'partner_id', 'cateArr', 'totalRevenue', 'totalRupees', 'totalDrinks', 'isView', 'totalRevenueKoGiam'));
+        return view($view, compact( 'items', 'arrSearch', 'keyword', 'time_type', 'month', 'year', 'month_do', 'arrData', 'chietkhauList', 'branch_id', 'cateList', 'use_date_from_format', 'use_date_to_format', 'branchList', 'beachArr', 'partners', 'partner_id', 'cateArr', 'totalRevenue', 'totalRupees', 'totalDrinks', 'isView', 'totalRevenueKoGiam', 'doiTacList', 'totalVat', 'totalCom', 'totalNet'));
 
     }
 
@@ -955,7 +974,9 @@ class BookingController extends Controller
         $arrSearch['created_at'] = $created_at = $request->created_at ? $request->created_at :  null;
         
         
-        $query = Booking::where('city_id', 1);             
+        $query = Booking::where('city_id', 1);
+        // giới hạn chi nhánh theo phân quyền cho mọi kiểu tìm (cả tìm theo mã bill / SĐT)
+        if (($permBranchIds = \App\Services\Perm::branchIds()) !== null) $query->whereIn('branch_id', $permBranchIds ?: [0]);             
 
         if($keyword){
             if(strlen($keyword) <= 8){
@@ -1258,7 +1279,9 @@ class BookingController extends Controller
         $arrSearch['created_at'] = $created_at = $request->created_at ? $request->created_at :  null;
         
         
-        $query = Booking::where('city_id', 1);             
+        $query = Booking::where('city_id', 1);
+        // giới hạn chi nhánh theo phân quyền cho mọi kiểu tìm (cả tìm theo mã bill / SĐT)
+        if (($permBranchIds = \App\Services\Perm::branchIds()) !== null) $query->whereIn('branch_id', $permBranchIds ?: [0]);             
 
         if($keyword){
             if(strlen($keyword) <= 8){
@@ -1506,6 +1529,7 @@ class BookingController extends Controller
     * @return Response
     */
     public function orders(Request $request){
+        if ($deny = $this->kitchenDenied()) return $deny; // màn hình bếp chỉ dùng cho Night Market
         // TODO: tùy hệ thống bạn lọc "order hiện tại" theo điều kiện nào:
         // - branch_id hiện tại
         // - da_thu = 0 (chưa thu tiền)
@@ -1515,7 +1539,7 @@ class BookingController extends Controller
         // Mình để filter cơ bản:
         DB::table('booking')
     ->where('status', '!=', 2)
-    ->where('branch_id', Auth::user()->branch_id)
+    ->where('branch_id', self::kitchenBranchId())
     ->whereNotExists(function ($q) {
         $q->select(DB::raw(1))
           ->from('booking_detail')
@@ -1535,7 +1559,7 @@ class BookingController extends Controller
             ->with(['details.dish'])
              ->where('status', '!=', 2)   // ❗ booking đã xong sẽ không hiện
             ->orderBy('created_at', 'asc')
-            ->where('branch_id', Auth::user()->branch_id)
+            ->where('branch_id', self::kitchenBranchId())
             ->get();
 
         // Gom theo table_no (mỗi table 1 block)
@@ -1605,6 +1629,7 @@ $pendingSummary = $pendingSummary->map(function ($r) {
 
     }
     public function curry(Request $request){
+        if ($deny = $this->kitchenDenied()) return $deny; // màn hình bếp chỉ dùng cho Night Market
         // TODO: tùy hệ thống bạn lọc "order hiện tại" theo điều kiện nào:
         // - branch_id hiện tại
         // - da_thu = 0 (chưa thu tiền)
@@ -1614,7 +1639,7 @@ $pendingSummary = $pendingSummary->map(function ($r) {
         // Mình để filter cơ bản:
         DB::table('booking')
     ->where('status', '!=', 2)
-    ->where('branch_id', Auth::user()->branch_id)
+    ->where('branch_id', self::kitchenBranchId())
     ->whereNotExists(function ($q) {
         $q->select(DB::raw(1))
           ->from('booking_detail')
@@ -1630,7 +1655,7 @@ $pendingSummary = $pendingSummary->map(function ($r) {
     ]);
         $bookings = Booking::query()
             ->whereNotNull('table_no')
-            ->where('branch_id', Auth::user()->branch_id)
+            ->where('branch_id', self::kitchenBranchId())
             //->where('da_thu', 0) // nếu bạn dùng cột này để biết chưa thanh toán
             ->with([
                 'details' => function ($q) {
@@ -1710,6 +1735,7 @@ $pendingSummary = $pendingSummary->map(function ($r) {
 
     }
     public function tandoor(Request $request){
+        if ($deny = $this->kitchenDenied()) return $deny; // màn hình bếp chỉ dùng cho Night Market
         // TODO: tùy hệ thống bạn lọc "order hiện tại" theo điều kiện nào:
         // - branch_id hiện tại
         // - da_thu = 0 (chưa thu tiền)
@@ -1719,7 +1745,7 @@ $pendingSummary = $pendingSummary->map(function ($r) {
         // Mình để filter cơ bản:
         DB::table('booking')
     ->where('status', '!=', 2)
-    ->where('branch_id', Auth::user()->branch_id)
+    ->where('branch_id', self::kitchenBranchId())
     ->whereNotExists(function ($q) {
         $q->select(DB::raw(1))
           ->from('booking_detail')
@@ -1735,7 +1761,7 @@ $pendingSummary = $pendingSummary->map(function ($r) {
     ]);
         $bookings = Booking::query()
             ->whereNotNull('table_no')
-            ->where('branch_id', Auth::user()->branch_id)
+            ->where('branch_id', self::kitchenBranchId())
             //->where('da_thu', 0) // nếu bạn dùng cột này để biết chưa thanh toán
             ->with([
                 'details' => function ($q) {
@@ -1814,6 +1840,39 @@ $pendingSummary = $pendingSummary->map(function ($r) {
         return view('booking.tandoor', compact('blocks', 'pendingSummary'));
 
     }
+    /** Chi nhánh dùng màn hình bếp (Night Market) */
+    public static function kitchenBranchId()
+    {
+        return (int) config('bombay.kitchen_branch_id', 1);
+    }
+
+    /** Chỉ tài khoản Night Market (hoặc admin / tài khoản có quyền chi nhánh Night Market mà không gắn chi nhánh) được vào màn hình bếp */
+    public static function canUseKitchen($user = null)
+    {
+        $user = $user ?: Auth::user();
+        if (!$user) return false;
+        $kb = self::kitchenBranchId();
+        if ((int) $user->branch_id > 0) return (int) $user->branch_id === $kb;
+        if ((int) $user->id === 1 || (!\App\Services\Perm::active($user) && (int) $user->role === 1)) return true;
+        return \App\Services\Perm::active($user) && \App\Services\Perm::branchAllowed($kb, $user);
+    }
+
+    protected function kitchenDenied()
+    {
+        if (self::canUseKitchen()) return null;
+        Session::flash('message', __('Màn hình bếp chỉ dùng cho chi nhánh Night Market'));
+        return redirect()->route('booking.index');
+    }
+
+    /** Bill của chi nhánh không dùng màn hình bếp: lưu xong là hoàn tất (status 1 -> 2) */
+    protected function autoCompleteNonKitchen($bookingId)
+    {
+        $b = Booking::find($bookingId);
+        if ($b && (int) $b->branch_id !== self::kitchenBranchId() && (int) $b->status === 1) {
+            $b->update(['status' => 2]);
+        }
+    }
+
     public function markDone(Request $request, BookingDetail $detail)
 {
     DB::transaction(function () use ($detail) {
@@ -1904,8 +1963,9 @@ $pendingSummary = $pendingSummary->map(function ($r) {
 
         $branchList = Branch::where('status', 1)->orderBy('display_order')->get();
         $partners = Account::where('is_partner', 1)->get();
+        $doiTacList = Partner::doiTacList();
                
-        return view($view, compact('cateList', 'use_date', 'bill', 'chietkhauList', 'partners', 'branchList'));
+        return view($view, compact('cateList', 'use_date', 'bill', 'chietkhauList', 'partners', 'branchList', 'doiTacList'));
     }
     /**
     * Store a newly created resource in storage.
@@ -1945,6 +2005,7 @@ $pendingSummary = $pendingSummary->map(function ($r) {
 
         $dataArr['take_away'] = isset($dataArr['take_away']) ? 1 : 0;
         $dataArr['indian'] = isset($dataArr['indian']) ? 2 : 1;
+        $dataArr = $this->normalizeDoiTac($dataArr);
 
         $tmpDate = explode('/', $dataArr['use_date']);
 
@@ -1982,6 +2043,10 @@ $pendingSummary = $pendingSummary->map(function ($r) {
             }
         }
 
+        // Đối tác: tính loại bill / số khách buffet / hoa hồng
+        PartnerDebtService::applyToBooking($booking_id);
+        $this->autoCompleteNonKitchen($booking_id);
+
         unset($dataArr['_token']);
         //store log
         $rsLog = BookingLogs::create([
@@ -1992,7 +2057,7 @@ $pendingSummary = $pendingSummary->map(function ($r) {
         ]);
 
 
-        Session::flash('message', 'Tạo mới thành công');
+        Session::flash('message', __('Tạo mới thành công'));
         $use_date = date('d/m/Y', strtotime($dataArr['use_date']));
 
         return redirect()->route('booking.index', ['use_date_from' => $use_date]);
@@ -2016,12 +2081,13 @@ $pendingSummary = $pendingSummary->map(function ($r) {
             $cateList = Dish::orderBy('display_order')->where('branch_id', $detail->branch_id)->get();                
             $branchList = Branch::where('status', 1)->orderBy('display_order')->get();
             $partners = Account::where('is_partner', 1)->get();
+            $doiTacList = Partner::doiTacList();
         
         $view = 'booking.edit-tour';
       
         
         
-        return view($view , compact( 'detail', 'cateList','chietkhauList', 'partners', 'branchList'));
+        return view($view , compact( 'detail', 'cateList','chietkhauList', 'partners', 'branchList', 'doiTacList'));
 
     }
     public function detail($id, Request $request)
@@ -2090,6 +2156,7 @@ $pendingSummary = $pendingSummary->map(function ($r) {
         $dataArr['xe_4t'] = isset($dataArr['xe_4t']) ? 1 : 0;
          $dataArr['take_away'] = isset($dataArr['take_away']) ? 1 : 0;
         $dataArr['indian'] = isset($dataArr['indian']) ? 2 : 1;
+        $dataArr = $this->normalizeDoiTac($dataArr);
         $tmpDate = explode('/', $dataArr['use_date']);
 
         $dataArr['use_date'] = $tmpDate[2].'-'.$tmpDate[1].'-'.$tmpDate[0];
@@ -2213,6 +2280,9 @@ $pendingSummary = $pendingSummary->map(function ($r) {
         unset($dataArr['notes_dish']);
         
         $model->update($dataArr);
+        // Đối tác: tính lại loại bill / số khách buffet / hoa hồng
+        PartnerDebtService::applyToBooking($model->id);
+        $this->autoCompleteNonKitchen($model->id);
 
         $contentDiff = array_diff_assoc($dataArr, $oldData);
 
@@ -2231,7 +2301,7 @@ $pendingSummary = $pendingSummary->map(function ($r) {
             ]);
         }
 
-        Session::flash('message', 'Cập nhật thành công');
+        Session::flash('message', __('Cập nhật thành công'));
 
         return redirect()->route('booking.index', ['use_date_from' => $use_date]);
 
@@ -2243,6 +2313,35 @@ $pendingSummary = $pendingSummary->map(function ($r) {
     * @param  int  $id
     * @return Response
     */
+    /** Chuẩn hóa các trường đối tác trên form bill. */
+    private function normalizeDoiTac($dataArr)
+    {
+        // Form cũ không có khối đối tác => không đụng tới các trường này
+        if(!isset($dataArr['doi_tac_form'])){
+            unset($dataArr['doi_tac_id'], $dataArr['co_chiet_khau'], $dataArr['ghi_no'], $dataArr['bill_type'], $dataArr['pax'], $dataArr['com_amount'], $dataArr['com_pct'], $dataArr['com_manual'], $dataArr['com_manual_flag']);
+            return $dataArr;
+        }
+        unset($dataArr['doi_tac_form']);
+        $dataArr['doi_tac_id'] = !empty($dataArr['doi_tac_id']) ? (int) $dataArr['doi_tac_id'] : null;
+        $dataArr['co_chiet_khau'] = ($dataArr['doi_tac_id'] && isset($dataArr['co_chiet_khau'])) ? 1 : 0;
+        $dataArr['ghi_no'] = ($dataArr['doi_tac_id'] && isset($dataArr['ghi_no'])) ? 1 : 0;
+        // HDV / tài xế: luôn có chiết khấu, không ghi nợ
+        if ($dataArr['doi_tac_id'] && \App\Models\Partner::isNoDebtType(\App\Models\Partner::where('id', $dataArr['doi_tac_id'])->value('type'))) {
+            $dataArr['co_chiet_khau'] = 1;
+            $dataArr['ghi_no'] = 0;
+        }
+        // % hoa hồng alacarte riêng cho bill (để trống = theo đối tác)
+        $pct = isset($dataArr['com_pct']) ? str_replace(',', '.', trim((string) $dataArr['com_pct'])) : '';
+        $dataArr['com_pct'] = ($dataArr['co_chiet_khau'] && $pct !== '' && is_numeric($pct)) ? max(0, min(100, (float) $pct)) : null;
+        // tiền chiết khấu: hệ thống tự tính, người dùng sửa lại thì lưu số sửa tay (com_manual)
+        $man = isset($dataArr['com_manual']) ? preg_replace('/[^\d]/', '', (string) $dataArr['com_manual']) : '';
+        $dataArr['com_manual'] = ($dataArr['co_chiet_khau'] && !empty($dataArr['com_manual_flag']) && $man !== '') ? (int) $man : null;
+        unset($dataArr['com_manual_flag']);
+        // các trường do hệ thống tính, không nhận từ form
+        unset($dataArr['bill_type'], $dataArr['pax'], $dataArr['com_amount']);
+        return $dataArr;
+    }
+
     public function destroy($id)
     {
         // delete
@@ -2251,7 +2350,7 @@ $pendingSummary = $pendingSummary->map(function ($r) {
         $type = $model->type;
         $model->update(['status' => 0]);
         // redirect
-        Session::flash('message', 'Xóa thành công');
+        Session::flash('message', __('Xóa thành công'));
         return redirect()->route('booking.index', ['type' => $type, 'use_date_from' => $use_date, 'tour_id' => $model->tour_id]);
     }
 

@@ -5,6 +5,8 @@ use Illuminate\Database\Eloquent\Model;
 
 
 class Partner extends Model  {
+    use \App\Traits\LogsActivity;
+
 
 	/**
 	 * The database table used by the model.
@@ -30,8 +32,39 @@ class Partner extends Model  {
                             'phone',  
                             'status',
                             'cost_type_id', 
-                            'description',                            
+                            'description',
+                            'phone_2',
+                            'email',
+                            'doi_tac',
+                            'type',
+                            'contact_name',
+                            'tax_code',
+                            'address',
+                            'bank_info',
+                            'pay_term_days',
+                            'com_buffet_per_pax',
+                            'com_alacarte_pct',
+                            'branch_id',
                             ];
+    // Loại đối tác bán hàng (doi_tac = 1)
+    public static $doiTacTypes = [
+        'tour'  => 'Công ty tour',
+        'hotel' => 'Khách sạn',
+        'hdv'   => 'HDV',
+        'ptt'   => 'Plan To Travel',
+        'cano'  => 'Cty cano',
+        'driver' => 'Tài xế',
+    ];
+    // Loại đối tác luôn có chiết khấu và không ghi nợ (16/11/2026)
+    public static $noDebtTypes = ['hdv', 'driver'];
+    public static function isNoDebtType($type)
+    {
+        return in_array((string) $type, self::$noDebtTypes, true);
+    }
+    public static function doiTacList()
+    {
+        return self::where('doi_tac', 1)->where('status', 1)->orderBy('type')->orderBy('name')->get();
+    }
     public static function getList($params = []){
         $query = self::where('status', 1);
         if( isset($params['cate_id']) && $params['cate_id'] ){

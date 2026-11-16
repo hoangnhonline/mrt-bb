@@ -23,138 +23,280 @@ use App\Models\BookingLogs;
 use DB;
 class ReportController extends Controller
 {
-    public function doanhthuview(Request $request) {
-        $error = $request->error ?? 0;
-        $monthDefault = date('m');
-        $month = $request->month ?? $monthDefault;
-        $type = $request->type ?? 1;
-        $year = $request->year ?? date('Y');
-        
-        $mindate = "$year-$month-01";
-        $maxdate = date("Y-m-t", strtotime($mindate));
-        $maxDay = date('d', strtotime($maxdate));
-        $minDay = 1;
-
-        // Lấy danh sách booking trong tháng
-        $all = Booking::where('use_date', '>=', $mindate)            
-            ->where('use_date', '<=', $maxdate)
-            ->whereIn('status', [1, 2])
-            ->where('branch_id', Auth::user()->branch_id)
-            ->get();
-
-        $tong_thuc_thu = $tong_coc = 0;        
-        $tong_hoa_hong_sales = 0;
-        $arrDay = [];
-        $tong_nguoi_thu = []; // Lưu tổng tiền của từng người thu trong toàn bộ tháng
-
-        foreach ($all as $bk) {
-            $key = (int) date('d', strtotime($bk->use_date));        
-            $nguoiThuId = $bk->nguoi_thu_tien ?? 0; // ID người thu tiền (hoặc 0 nếu null)
-
-            if (!isset($arrDay[$key])) {
-                $arrDay[$key] = [
-                    'tong_tien'                     => 0, 
-                    'tong_giam'                     => 0, 
-                    'tong_chiet_khau'               => 0, 
-                    'tong_tien_coc'                 => 0,
-                    'tong_con_lai_chua_tru_chi_phi' => 0,
-                    'tong_john'                     => 0,
-                    'tong_20'                       => 0,
-                    'nguoi_thu'                     => [] // Thống kê theo người thu từng ngày
-                ];
-            }
-
-            $chietkhau = $bk->commision;
-
-            // Cộng dồn theo từng ngày
-            $arrDay[$key]['tong_tien'] += $bk->total_price;
-            $arrDay[$key]['tong_giam'] += $bk->discount;
-            $arrDay[$key]['tong_chiet_khau'] += $chietkhau;
-            $arrDay[$key]['tong_tien_coc'] += $bk->tien_coc;
-            $arrDay[$key]['tong_con_lai_chua_tru_chi_phi'] += ($bk->total_price - $bk->discount - $chietkhau - $bk->tien_coc);    
-
-            // Thống kê total_price theo người thu tiền theo từng ngày
-            if (!isset($arrDay[$key]['nguoi_thu'][$nguoiThuId])) {
-                $arrDay[$key]['nguoi_thu'][$nguoiThuId] = 0;
-            }
-            $arrDay[$key]['nguoi_thu'][$nguoiThuId] += $bk->total_price;
-
-            // Thống kê total_price theo người thu tiền tổng cả tháng
-            if (!isset($tong_nguoi_thu[$nguoiThuId])) {
-                $tong_nguoi_thu[$nguoiThuId] = 0;
-            }
-            $tong_nguoi_thu[$nguoiThuId] += $bk->total_price;
-        }        
-
-        $minDateFormat = date('d/m/Y', strtotime($mindate));
-        $maxDateFormat = date('d/m/Y', strtotime($maxdate));
-        
-        $view = 'report.doanh-thu-view';
-
-        return view($view, compact(
-            'arrDay', 
-            'tong_nguoi_thu',
-            'tong_thuc_thu', 
-            'tong_hoa_hong_sales', 
-            'maxDay', 
-            'minDateFormat', 
-            'maxDateFormat', 
-            'month', 
-            'year', 
-            'type', 
-            'minDay'
-        ));
-    }
+    /**
+     * Thống kê món bán chạy theo Tuần / Tháng / Năm / Tùy chọn.
+     * - Gộp các món trùng tên (cùng món ở nhiều menu/chi nhánh).
+     * - Chỉ tính bill hợp lệ (booking.status 1, 2), bỏ bill hủy.
+     * - So sánh với kỳ trước cùng độ dài.
+     */
     public function dishReport(Request $request)
     {
-        $from = $request->from;
-        $to   = $request->to;
+        $period = in_array($request->period, ['week', 'month', 'year', 'custom']) ? $request->period : 'week';
+        $anchor = $request->date ? strtotime($request->date) : time();
+        if(!$anchor){ $anchor = time(); }
+        $branch_id = $request->branch_id ? (int) $request->branch_id : null;
+        $group = in_array($request->group, ['all', 'main', 'bread', 'drink']) ? $request->group : 'all';
+        $sort = $request->sort == 'money' ? 'money' : 'qty';
 
-        /**
-         * Base query
-         */
-        $baseQuery = DB::table('booking_detail as bd')
-            ->join('booking as b', 'b.id', '=', 'bd.booking_id')
-            ->join('dish as d', 'd.id', '=', 'bd.dish_id');
-
-        if ($from && $to) {
-            $baseQuery->whereBetween('b.use_date', [$from, $to]);
+        if($period == 'custom' && $request->from && $request->to && strtotime($request->from) && strtotime($request->to)){
+            $from = date('Y-m-d', strtotime($request->from));
+            $to = date('Y-m-d', strtotime($request->to));
+            if($from > $to){ list($from, $to) = [$to, $from]; }
+            $days = (int) round((strtotime($to) - strtotime($from)) / 86400) + 1;
+            $prevFrom = date('Y-m-d', strtotime($from.' -'.$days.' days'));
+            $prevTo = date('Y-m-d', strtotime($from.' -1 day'));
+            $label = date('d/m/Y', strtotime($from)).' - '.date('d/m/Y', strtotime($to));
+            $prevAnchor = $nextAnchor = null;
+        }else{
+            if($period == 'custom'){ $period = 'week'; }
+            if($period == 'week'){
+                $from = date('Y-m-d', strtotime('monday this week', $anchor));
+                $to = date('Y-m-d', strtotime($from.' +6 days'));
+                $prevFrom = date('Y-m-d', strtotime($from.' -7 days'));
+                $prevTo = date('Y-m-d', strtotime($from.' -1 day'));
+                $label = __('Tuần').' '.date('d/m', strtotime($from)).' - '.date('d/m/Y', strtotime($to));
+                $prevAnchor = $prevFrom;
+                $nextAnchor = date('Y-m-d', strtotime($from.' +7 days'));
+            }elseif($period == 'month'){
+                $from = date('Y-m-01', $anchor);
+                $to = date('Y-m-t', $anchor);
+                $prevFrom = date('Y-m-01', strtotime($from.' -1 month'));
+                $prevTo = date('Y-m-t', strtotime($prevFrom));
+                $label = __('Tháng').' '.date('m/Y', $anchor);
+                $prevAnchor = $prevFrom;
+                $nextAnchor = date('Y-m-01', strtotime($from.' +1 month'));
+            }else{
+                $from = date('Y-01-01', $anchor);
+                $to = date('Y-12-31', $anchor);
+                $prevFrom = date('Y-01-01', strtotime($from.' -1 year'));
+                $prevTo = date('Y-12-31', strtotime($prevFrom));
+                $label = __('Năm').' '.date('Y', $anchor);
+                $prevAnchor = $prevFrom;
+                $nextAnchor = date('Y-01-01', strtotime($from.' +1 year'));
+            }
         }
 
-        /**
-         * Report theo món
-         */
-        $reports = (clone $baseQuery)
-            ->select(
-                'd.id',
-                'd.name',
+        $query = function ($f, $t) use ($branch_id, $group) {
+            $q = DB::table('booking_detail as bd')
+                ->join('booking as b', 'b.id', '=', 'bd.booking_id')
+                ->join('dish as d', 'd.id', '=', 'bd.dish_id')
+                ->whereIn('b.status', [1, 2])
+                ->whereBetween('b.use_date', [$f, $t]);
+            if($branch_id){
+                $q->where('b.branch_id', $branch_id);
+            }
+            if($group == 'bread'){
+                $q->where('d.is_bread', 1);
+            }elseif($group == 'drink'){
+                $q->where('d.is_drink', 1);
+            }elseif($group == 'main'){
+                $q->where(function ($w) { $w->whereNull('d.is_bread')->orWhere('d.is_bread', 0); })
+                  ->where(function ($w) { $w->whereNull('d.is_drink')->orWhere('d.is_drink', 0); });
+            }
+            return $q;
+        };
+
+        $rows = $query($from, $to)
+            ->select(DB::raw('TRIM(d.name) as name'),
                 DB::raw('SUM(bd.amount) as total_qty'),
-                DB::raw('SUM(bd.total_price) as total_money')
-            )
-            ->groupBy('d.id', 'd.name')
-            ->orderByDesc('total_qty')
+                DB::raw('SUM(bd.total_price) as total_money'),
+                DB::raw('MAX(d.is_bread) as is_bread'),
+                DB::raw('MAX(d.is_drink) as is_drink'))
+            ->groupBy(DB::raw('TRIM(d.name)'))
             ->get();
 
-        /**
-         * Tổng doanh thu theo nhóm (1 query)
-         */
-        $totals = (clone $baseQuery)
-            ->selectRaw("
-                SUM(CASE WHEN d.is_bread = 1 THEN bd.total_price ELSE 0 END) AS total_bread,
-                SUM(CASE WHEN d.is_drink = 1 THEN bd.total_price ELSE 0 END) AS total_drink,
-                SUM(CASE WHEN d.is_bread = 0 AND d.is_drink = 0 THEN bd.total_price ELSE 0 END) AS total_other
-            ")
-            ->first();
+        $prevRows = $query($prevFrom, $prevTo)
+            ->select(DB::raw('TRIM(d.name) as name'),
+                DB::raw('SUM(bd.amount) as total_qty'),
+                DB::raw('SUM(bd.total_price) as total_money'))
+            ->groupBy(DB::raw('TRIM(d.name)'))
+            ->get();
+        $prevMap = [];
+        foreach($prevRows as $p){
+            $prevMap[mb_strtolower($p->name)] = $p;
+        }
 
-        return view('reports.dish', [
-            'reports'     => $reports,
-            'from'        => $from,
-            'to'          => $to,
-            'totalBread'  => (int) $totals->total_bread,
-            'totalDrink'  => (int) $totals->total_drink,
-            'totalOther'  => (int) $totals->total_other,
-        ]);
+        $sumQty = $sumMoney = 0;
+        $totalBread = $totalDrink = $totalOther = 0;
+        $reports = [];
+        foreach($rows as $r){
+            $qty = (float) $r->total_qty;
+            $money = (float) $r->total_money;
+            $sumQty += $qty;
+            $sumMoney += $money;
+            if($r->is_bread == 1){
+                $totalBread += $money;
+            }elseif($r->is_drink == 1){
+                $totalDrink += $money;
+            }else{
+                $totalOther += $money;
+            }
+            $p = $prevMap[mb_strtolower($r->name)] ?? null;
+            $prevQty = $p ? (float) $p->total_qty : 0;
+            $reports[] = [
+                'name' => $r->name,
+                'qty' => $qty,
+                'money' => $money,
+                'type' => $r->is_bread == 1 ? 'Bánh' : ($r->is_drink == 1 ? 'Đồ uống' : 'Món chính'),
+                'prev_qty' => $prevQty,
+                'prev_money' => $p ? (float) $p->total_money : 0,
+                'diff_pct' => $prevQty > 0 ? round(($qty - $prevQty) / $prevQty * 100, 1) : null,
+            ];
+        }
+        usort($reports, function ($a, $b) use ($sort) {
+            $k = $sort == 'money' ? 'money' : 'qty';
+            if($a[$k] == $b[$k]){ return $b[$k == 'qty' ? 'money' : 'qty'] <=> $a[$k == 'qty' ? 'money' : 'qty']; }
+            return $b[$k] <=> $a[$k];
+        });
+
+        $prevSumMoney = 0;
+        foreach($prevRows as $p){ $prevSumMoney += (float) $p->total_money; }
+
+        $branchList = Branch::where('status', 1)->orderBy('display_order')->get();
+
+        return view('reports.dish', compact('reports', 'period', 'from', 'to', 'prevFrom', 'prevTo', 'label',
+            'prevAnchor', 'nextAnchor', 'branch_id', 'group', 'sort', 'branchList', 'sumQty', 'sumMoney',
+            'prevSumMoney', 'totalBread', 'totalDrink', 'totalOther'));
     }
+    /**
+     * Tỷ lệ từng loại chi phí trên doanh thu (theo Tuần / Tháng / Năm / Tùy chọn, lọc chi nhánh).
+     * Doanh thu = tổng tiền bill (booking.total_price) - giảm giá (booking.discount), bỏ bill hủy (chỉ status 1, 2).
+     * Chi phí đầu tư (Setup/mở chi nhánh, Visa/vé máy bay NV) tách riêng, không tính vào tỷ lệ vận hành.
+     */
+    public function chiPhiDoanhThu(Request $request)
+    {
+        $period = in_array($request->period, ['week', 'month', 'year', 'custom']) ? $request->period : 'month';
+        $anchor = $request->date && strtotime($request->date) ? strtotime($request->date) : time();
+        $branch_id = $request->branch_id ? (int) $request->branch_id : null;
+        $prevAnchor = $nextAnchor = null;
+        if($period == 'custom' && $request->from && $request->to && strtotime($request->from) && strtotime($request->to)){
+            $from = date('Y-m-d', strtotime($request->from));
+            $to = date('Y-m-d', strtotime($request->to));
+            if($from > $to){ list($from, $to) = [$to, $from]; }
+            $days = (int) round((strtotime($to) - strtotime($from)) / 86400) + 1;
+            $prevFrom = date('Y-m-d', strtotime($from.' -'.$days.' days'));
+            $prevTo = date('Y-m-d', strtotime($from.' -1 day'));
+            $label = date('d/m/Y', strtotime($from)).' - '.date('d/m/Y', strtotime($to));
+        }else{
+            if($period == 'custom'){ $period = 'month'; }
+            if($period == 'week'){
+                $from = date('Y-m-d', strtotime('monday this week', $anchor));
+                $to = date('Y-m-d', strtotime($from.' +6 days'));
+                $prevFrom = date('Y-m-d', strtotime($from.' -7 days'));
+                $prevTo = date('Y-m-d', strtotime($from.' -1 day'));
+                $label = __('Tuần').' '.date('d/m', strtotime($from)).' - '.date('d/m/Y', strtotime($to));
+                $nextAnchor = date('Y-m-d', strtotime($from.' +7 days'));
+            }elseif($period == 'month'){
+                $from = date('Y-m-01', $anchor);
+                $to = date('Y-m-t', $anchor);
+                $prevFrom = date('Y-m-01', strtotime($from.' -1 month'));
+                $prevTo = date('Y-m-t', strtotime($prevFrom));
+                $label = __('Tháng').' '.date('m/Y', $anchor);
+                $nextAnchor = date('Y-m-01', strtotime($from.' +1 month'));
+            }else{
+                $from = date('Y-01-01', $anchor);
+                $to = date('Y-12-31', $anchor);
+                $prevFrom = date('Y-01-01', strtotime($from.' -1 year'));
+                $prevTo = date('Y-12-31', strtotime($prevFrom));
+                $label = __('Năm').' '.date('Y', $anchor);
+                $nextAnchor = date('Y-01-01', strtotime($from.' +1 year'));
+            }
+            $prevAnchor = $prevFrom;
+        }
+
+        // Loại chi phí tách riêng (đầu tư, không tính vào tỷ lệ vận hành)
+        $investCateIds = [4, 75];
+        // Nhóm nhân sự (labor cost) theo group_name của danh mục, trừ loại đầu tư
+        $laborGroup = 'Nhân sự';
+
+        $revenue = function ($f, $t) use ($branch_id) {
+            $q = DB::table('booking')->whereIn('status', [1, 2])->whereBetween('use_date', [$f, $t]);
+            if($branch_id){ $q->where('branch_id', $branch_id); }
+            $r = $q->select(DB::raw('SUM(total_price) as gross'), DB::raw('SUM(IFNULL(discount, 0)) as discount'),
+                            DB::raw('COUNT(*) as bills'))->first();
+            return ['gross' => (float) $r->gross, 'discount' => (float) $r->discount,
+                    'net' => (float) $r->gross - (float) $r->discount, 'bills' => (int) $r->bills];
+        };
+        $costByCate = function ($f, $t) use ($branch_id) {
+            $q = DB::table('cost')->where('status', '>', 0)->whereBetween('date_use', [$f, $t]);
+            if($branch_id){ $q->where('branch_id', $branch_id); }
+            return $q->select('cate_id', DB::raw('SUM(total_money) as money'), DB::raw('COUNT(*) as cnt'))
+                     ->groupBy('cate_id')->get()->keyBy('cate_id');
+        };
+
+        $rev = $revenue($from, $to);
+        $prevRev = $revenue($prevFrom, $prevTo);
+        $cur = $costByCate($from, $to);
+        $prev = $costByCate($prevFrom, $prevTo);
+
+        $cateList = CostType::orderBy('display_order')->get()->keyBy('id');
+        $groups = [];      // nhóm vận hành
+        $invest = [];      // chi phí đầu tư tách riêng
+        $totals = ['cost' => 0, 'prev_cost' => 0, 'food' => 0, 'labor' => 0, 'prev_food' => 0, 'prev_labor' => 0,
+                   'invest' => 0, 'prev_invest' => 0];
+        $cateIds = array_unique(array_merge($cur->keys()->all(), $prev->keys()->all()));
+        foreach($cateIds as $cid){
+            $ct = $cateList[$cid] ?? null;
+            $money = isset($cur[$cid]) ? (float) $cur[$cid]->money : 0;
+            $prevMoney = isset($prev[$cid]) ? (float) $prev[$cid]->money : 0;
+            $row = [
+                'cate_id' => $cid,
+                'name' => $ct ? $ct->name : '(Chưa phân loại)',
+                'order' => $ct ? (int) $ct->display_order : 999,
+                'money' => $money,
+                'count' => isset($cur[$cid]) ? (int) $cur[$cid]->cnt : 0,
+                'prev_money' => $prevMoney,
+                'pct_rev' => $rev['net'] > 0 ? $money / $rev['net'] * 100 : null,
+                'prev_pct_rev' => $prevRev['net'] > 0 ? $prevMoney / $prevRev['net'] * 100 : null,
+            ];
+            if(in_array((int) $cid, $investCateIds)){
+                $invest[] = $row;
+                $totals['invest'] += $money;
+                $totals['prev_invest'] += $prevMoney;
+                continue;
+            }
+            $gname = $ct && $ct->group_name ? $ct->group_name : 'Khác';
+            if(!isset($groups[$gname])){
+                $groups[$gname] = ['name' => $gname, 'order' => $row['order'], 'money' => 0, 'prev_money' => 0, 'rows' => []];
+            }
+            $groups[$gname]['rows'][] = $row;
+            $groups[$gname]['money'] += $money;
+            $groups[$gname]['prev_money'] += $prevMoney;
+            $groups[$gname]['order'] = min($groups[$gname]['order'], $row['order']);
+            $totals['cost'] += $money;
+            $totals['prev_cost'] += $prevMoney;
+            if(mb_strpos($gname, 'Giá vốn') === 0){
+                $totals['food'] += $money;
+                $totals['prev_food'] += $prevMoney;
+            }
+            if($gname == $laborGroup){
+                $totals['labor'] += $money;
+                $totals['prev_labor'] += $prevMoney;
+            }
+        }
+        foreach($groups as &$g){
+            usort($g['rows'], function ($a, $b) { return $a['order'] <=> $b['order']; });
+        }
+        unset($g);
+        uasort($groups, function ($a, $b) { return $a['order'] <=> $b['order']; });
+
+        $pct = function ($v, $base) { return $base > 0 ? $v / $base * 100 : null; };
+        $kpi = [
+            'food' => [$pct($totals['food'], $rev['net']), $pct($totals['prev_food'], $prevRev['net'])],
+            'labor' => [$pct($totals['labor'], $rev['net']), $pct($totals['prev_labor'], $prevRev['net'])],
+            'prime' => [$pct($totals['food'] + $totals['labor'], $rev['net']), $pct($totals['prev_food'] + $totals['prev_labor'], $prevRev['net'])],
+            'cost' => [$pct($totals['cost'], $rev['net']), $pct($totals['prev_cost'], $prevRev['net'])],
+        ];
+        $remain = $rev['net'] - $totals['cost'];
+        $prevRemain = $prevRev['net'] - $totals['prev_cost'];
+
+        $branchList = Branch::where('status', 1)->orderBy('display_order')->get();
+
+        return view('report.chi-phi-doanh-thu', compact('period', 'label', 'from', 'to', 'prevFrom', 'prevTo',
+            'prevAnchor', 'nextAnchor', 'branch_id', 'branchList', 'rev', 'prevRev', 'groups', 'invest', 'totals',
+            'kpi', 'remain', 'prevRemain'));
+    }
+
     public function chiphi(Request $request){
         $monthDefault = date('m');
         $month = $request->month ?? $monthDefault;
@@ -965,5 +1107,87 @@ class ReportController extends Controller
         return view($view, compact('arrDay', 'tong_thuc_thu', 'tong_hoa_hong_sales', 'arrCost', 'tong_chi','maxDay', 'minDateFormat', 'maxDateFormat', 'month', 'year', 'cateList', 'type', 'tong_chi_phi_van_hanh', 'tong_chi_phi_khac', 'minDay', 'maxDay', 'arrNguoiThu', 'totalChi'));
 
 
+    }
+    public function doanhthuview(Request $request) {
+        $error = $request->error ?? 0;
+        $monthDefault = date('m');
+        $month = $request->month ?? $monthDefault;
+        $type = $request->type ?? 1;
+        $year = $request->year ?? date('Y');
+        
+        $mindate = "$year-$month-01";
+        $maxdate = date("Y-m-t", strtotime($mindate));
+        $maxDay = date('d', strtotime($maxdate));
+        $minDay = 1;
+
+        // Lấy danh sách booking trong tháng
+        $all = Booking::where('use_date', '>=', $mindate)            
+            ->where('use_date', '<=', $maxdate)
+            ->whereIn('status', [1, 2])
+            ->where('branch_id', Auth::user()->branch_id)
+            ->get();
+
+        $tong_thuc_thu = $tong_coc = 0;        
+        $tong_hoa_hong_sales = 0;
+        $arrDay = [];
+        $tong_nguoi_thu = []; // Lưu tổng tiền của từng người thu trong toàn bộ tháng
+
+        foreach ($all as $bk) {
+            $key = (int) date('d', strtotime($bk->use_date));        
+            $nguoiThuId = $bk->nguoi_thu_tien ?? 0; // ID người thu tiền (hoặc 0 nếu null)
+
+            if (!isset($arrDay[$key])) {
+                $arrDay[$key] = [
+                    'tong_tien'                     => 0, 
+                    'tong_giam'                     => 0, 
+                    'tong_chiet_khau'               => 0, 
+                    'tong_tien_coc'                 => 0,
+                    'tong_con_lai_chua_tru_chi_phi' => 0,
+                    'tong_john'                     => 0,
+                    'tong_20'                       => 0,
+                    'nguoi_thu'                     => [] // Thống kê theo người thu từng ngày
+                ];
+            }
+
+            $chietkhau = $bk->commision;
+
+            // Cộng dồn theo từng ngày
+            $arrDay[$key]['tong_tien'] += $bk->total_price;
+            $arrDay[$key]['tong_giam'] += $bk->discount;
+            $arrDay[$key]['tong_chiet_khau'] += $chietkhau;
+            $arrDay[$key]['tong_tien_coc'] += $bk->tien_coc;
+            $arrDay[$key]['tong_con_lai_chua_tru_chi_phi'] += ($bk->total_price - $bk->discount - $chietkhau - $bk->tien_coc);    
+
+            // Thống kê total_price theo người thu tiền theo từng ngày
+            if (!isset($arrDay[$key]['nguoi_thu'][$nguoiThuId])) {
+                $arrDay[$key]['nguoi_thu'][$nguoiThuId] = 0;
+            }
+            $arrDay[$key]['nguoi_thu'][$nguoiThuId] += $bk->total_price;
+
+            // Thống kê total_price theo người thu tiền tổng cả tháng
+            if (!isset($tong_nguoi_thu[$nguoiThuId])) {
+                $tong_nguoi_thu[$nguoiThuId] = 0;
+            }
+            $tong_nguoi_thu[$nguoiThuId] += $bk->total_price;
+        }        
+
+        $minDateFormat = date('d/m/Y', strtotime($mindate));
+        $maxDateFormat = date('d/m/Y', strtotime($maxdate));
+        
+        $view = 'report.doanh-thu-view';
+
+        return view($view, compact(
+            'arrDay', 
+            'tong_nguoi_thu',
+            'tong_thuc_thu', 
+            'tong_hoa_hong_sales', 
+            'maxDay', 
+            'minDateFormat', 
+            'maxDateFormat', 
+            'month', 
+            'year', 
+            'type', 
+            'minDay'
+        ));
     }
 }

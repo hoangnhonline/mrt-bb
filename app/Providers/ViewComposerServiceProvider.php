@@ -5,7 +5,7 @@ use Illuminate\Support\ServiceProvider;
 use Hash;
 use App\Models\UserNotification;
 use App\Models\Collecter;
-
+use App\Models\Branch;
 use Auth;
 use Helper;
 class ViewComposerServiceProvider extends ServiceProvider
@@ -56,6 +56,7 @@ class ViewComposerServiceProvider extends ServiceProvider
 	        $userRole = $notiList = null;
 	        $collecterList = Collecter::where('status', 1)->orderBy('display_order')->get();
 	        $notNH = true;
+	        $branchDetail = null;
 	        if(Auth::check()){
 	        	$notiList = UserNotification::where('user_id', Auth::user()->id)->where('is_read', 0)->orderBy('id', 'desc')->get();
 	        	$userRole = Auth::user()->role;
@@ -63,8 +64,9 @@ class ViewComposerServiceProvider extends ServiceProvider
 		            $collecterList = Collecter::where('branch_id', 7)->get();
 		        }
 		        $notNH = Auth::user()->id == 515 ? false : true;
+		        $branchDetail = Branch::find(Auth::user()->branch_id);
 	        }
-	       	$collecterNameArr = Helper::getCollecterNameArr();
+	       	$collecterNameArr = Helper::getCollecterNameArr();      
 	       	
 	       	
 			$view->with( [
@@ -77,7 +79,8 @@ class ViewComposerServiceProvider extends ServiceProvider
 					'userRole' => $userRole,
 					'collecterNameArr' => $collecterNameArr,
 					'collecterList' => $collecterList,
-					'notNH' => $notNH
+					'notNH' => $notNH,
+					'branchDetail' => $branchDetail
 			] );
 			
 		});

@@ -67,7 +67,7 @@
                 <option value="">--Thu tiền--</option>
                 @foreach($collecterList as $payer)
                   @if($payer->is_view == 1)
-                  <option value="{{ $payer->id }}" {{ $arrSearch['nguoi_thu_tien'] == $payer->id ? "selected" : "" }}>{{ $payer->name }}</option>
+                  <option value="{{ $payer->id }}" {{ $arrSearch['nguoi_thu_tien'] == $payer->id ? "selected" : "" }}>{{ $payer->name_view }}</option>
                   @endif
                 @endforeach
               </select>
@@ -173,7 +173,7 @@
           
                 <td class="text-center">                   
                  @if($item->nguoi_thu_tien)
-                  {{ $item->collecter->name }}
+                  {{ $item->collecter->name_view }}
                   @endif
                      
                 </td>

@@ -1,11 +1,15 @@
 <!DOCTYPE html>
-<html>
+<html lang="{{ app()->getLocale() }}">
     <head>
         <meta charset="utf-8" />
         <meta http-equiv="X-UA-Compatible" content="IE=edge" />
         <meta name="csrf-token" content="{{ csrf_token() }}" />
-
+        @if(Auth::user()->is_view == 1)
+        <title>Bombay Express - Hệ thống quản lý booking</title>
+        @else
         <title>BOMBAY Indian Restaurant - Hệ thống quản lý booking</title>
+        @endif
+        
         <meta property="og:type" content="website" />
         <meta property="og:image" content="images/logo.png" />
         <meta name="robots" content="noindex" />
@@ -67,16 +71,21 @@
             }
         </style>
     </head>
+    @if(Auth::user()->is_view == 1)
+    <body class="skin-blue">
+    @else
+    <body class="skin-blue sidebar-mini sidebar-collapse">
+    @endif
     <body class="skin-blue sidebar-mini sidebar-collapse">
         <div class="wrapper">
             @include('partials.header') 
-            
-            @if(Auth::user()->is_view == 1)
+            @if(\App\Services\Perm::active())
+                @include('partials.sidebar-role')
+            @elseif(Auth::user()->is_view == 1)
                 @include('partials.sidebar-view')           
             @else
                 @include('partials.sidebar')           
-            @endif         
-            
+            @endif
             @yield('content')
             <div style="display: none;" id="box_uploadimages">
                 <div class="upload_wrapper block_auto">
@@ -267,6 +276,9 @@
         </style>
 
         @yield('js')
+        @include('partials.filter-picker')
+        @include('partials.sticky-table-header')
+        @include('partials.perm-hide')
         <script type="text/javascript">
             $(document).ready(function () {
                 $(".datepicker").datepicker({

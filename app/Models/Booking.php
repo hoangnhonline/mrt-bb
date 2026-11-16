@@ -5,6 +5,8 @@ use Illuminate\Database\Eloquent\Model;
 
 
 class Booking extends Model  {
+    use \App\Traits\LogsActivity;
+
 
 	/**
 	 * The database table used by the model.
@@ -61,7 +63,16 @@ class Booking extends Model  {
                             'checked',
                             'indian', 
                             'take_away',
-                            'chiet_khau'
+                            'no_vat',
+                            'chiet_khau',
+                            'doi_tac_id',
+                            'co_chiet_khau',
+                            'ghi_no',
+                            'bill_type',
+                            'pax',
+                            'com_amount',
+                            'com_pct',
+                            'com_manual'
                             ];
     public static function getList($params = []){
         $query = self::where('status', 1);
@@ -175,13 +186,16 @@ class Booking extends Model  {
     {
         return $this->belongsTo('App\Models\NguoiTuVan', 'nguoi_tu_van');
     }
-    public function branch()
-    {
-        return $this->belongsTo('App\Models\Branch', 'branch_id');
-    }
     public function collecter()
     {
         return $this->belongsTo('App\Models\Collecter', 'nguoi_thu_tien');
     }
-    
+    public function branch()
+    {
+        return $this->belongsTo('App\Models\Branch', 'branch_id');
+    }
+    public function doiTac()
+    {
+        return $this->belongsTo('App\Models\Partner', 'doi_tac_id');
+    }
 }

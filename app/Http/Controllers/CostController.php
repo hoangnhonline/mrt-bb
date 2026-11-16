@@ -15,23 +15,16 @@ use App\Models\Partner;
 use App\Models\BankInfo;
 use App\Models\Branch;
 use App\Models\NhaCungCap;
+use App\Models\Ingredient;
+use App\Services\CostDetailService;
 
 use Maatwebsite\Excel\Facades\Excel;
 use App\User;
-use Helper, File, Session, Auth, Image, Hash;
+use Helper, File, Session, Auth, Image, Hash, DB;
 
 class CostController extends Controller
 {
 
-    public function cal(){
-       $all = Cost::all();
-       foreach($all as $a){
-            $date_use = $a->date_use;
-            foreach($a->details as $b){
-                $b->update(['date_use' => $date_use]);
-            }
-       }
-    }
     public function changeValueByColumn(Request $request){
         $id = $request->id;
         $column = $request->col;
@@ -73,6 +66,7 @@ class CostController extends Controller
         $arrSearch['status'] = $status = $request->status ?? null;
         $arrSearch['id_search'] = $id_search = $request->id_search ?? null;
         $arrSearch['ncc_id'] = $ncc_id = $request->ncc_id ?? null;
+        $arrSearch['detail_check'] = $detail_check = $request->detail_check ?? null;
         $arrSearch['branch_id'] = $branch_id = $request->branch_id ? $request->branch_id : null;
         $arrSearch['use_date_from'] = $use_date_from = $date_use = date('d/m/Y', strtotime($mindate));
         $query = Cost::where('status', '>', 0);
@@ -107,6 +101,9 @@ class CostController extends Controller
         }
         if($ncc_id){
             $query->where('ncc_id', $ncc_id);
+        }
+        if($detail_check == 1){
+            $query->where('detail_check', 1);
         }
          // if($branch_id){
          //        $arrSearch['branch_id'] = $branch_id;
@@ -379,10 +376,11 @@ class CostController extends Controller
 
         $cate_id = $request->cate_id ? $request->cate_id : null;
         $date_use = $request->date_use ? $request->date_use : null;
-        $cateList = CostType::orderBy('display_order')->get();
-        $cateListShow = CostType::where('is_show', 1)->orderBy('display_order')->get();
+        $cateList = CostType::where('status', 1)->orderBy('display_order')->get();
+        $cateListShow = CostType::where('is_show', 1)->where('status', 1)->orderBy('display_order')->get();
         
-        $nccList = NhaCungCap::get();
+        $nccList = NhaCungCap::where('status', 1)->orderBy('display_order')->orderBy('name')->get();
+        $ingredientList = Ingredient::active()->orderBy('name')->get();
         
         $partnerList = null;
         if($cate_id){
@@ -394,7 +392,7 @@ class CostController extends Controller
         $bankInfoList = BankInfo::all();
         $vietNameBanks = \App\Helpers\Helper::getVietNamBanks();
         $branchList = Branch::where('status', 1)->orderBy('display_order')->get();
-        return view('cost.create', compact('cate_id', 'date_use', 'cateList', 'month', 'partnerList', 'bankInfoList', 'vietNameBanks', 'branchList', 'nccList', 'cateListShow'));
+        return view('cost.create', compact('cate_id', 'date_use', 'cateList', 'month', 'partnerList', 'bankInfoList', 'vietNameBanks', 'branchList', 'nccList', 'cateListShow', 'ingredientList'));
     }
     public function sms(Request $request)
     {
@@ -453,13 +451,20 @@ class CostController extends Controller
         if($dataArr['nguoi_chi'] == 1){ // tien mat thi trang thai Da Thanh Toan
             $dataArr['status'] = 2;
         }
-        $arrData['created_user'] = $arrData['updated_user'] = Auth::user()->id;
+        // (sửa lỗi cũ: trước đây gán vào $arrData nên created_user không bao giờ được lưu)
+        $dataArr['created_user'] = $dataArr['updated_user'] = Auth::user()->id;
         if(isset($dataArr['image_tmp_url'])){
             $dataArr['image_list'] = json_encode($dataArr['image_tmp_url']);
         }
-        $rs = Cost::create($dataArr);
+        unset($dataArr['detail_total'], $dataArr['detail_check']);
+        $details = $request->input('details', []);
+        $rs = DB::transaction(function () use ($dataArr, $details) {
+            $cost = Cost::create($dataArr);
+            $this->saveDetails($cost, $details);
+            return $cost;
+        });
 
-        Session::flash('message', 'Tạo mới thành công');
+        Session::flash('message', __('Tạo mới thành công'));
         $use_date_from = date('d/m/Y', strtotime($dataArr['date_use']));
         return redirect()->route('cost.index', ['use_date_from' => $use_date_from, 'time_type' => 3]);
     }
@@ -502,7 +507,7 @@ class CostController extends Controller
         if($dataArr['nguoi_chi'] == 1){ // tien mat thi trang thai Da Thanh Toan
             $dataArr['status'] = 2;
         }
-        $arrData['updated_user'] = Auth::user()->id;
+        $dataArr['updated_user'] = Auth::user()->id;
         if(isset($dataArr['old_image'])){
             $dataArr['image_list'] = $dataArr['old_image'];
         }
@@ -511,9 +516,14 @@ class CostController extends Controller
         $new_image = isset($dataArr['image_tmp_url']) ? $dataArr['image_tmp_url'] : [];
         $image_list = array_merge($old_image, $new_image);
         $dataArr['image_list'] = json_encode($image_list);
-        $model->update($dataArr);
+        unset($dataArr['detail_total'], $dataArr['detail_check'], $dataArr['created_user']);
+        $details = $request->input('details', []);
+        DB::transaction(function () use ($model, $dataArr, $details) {
+            $model->update($dataArr);
+            $this->saveDetails($model, $details);
+        });
 
-        Session::flash('message', 'Cập nhật thành công');
+        Session::flash('message', __('Cập nhật thành công'));
 
         return redirect()->route('cost.index', ['use_date_from' => $date_use, 'time_type' => 3]);
     }
@@ -538,25 +548,35 @@ class CostController extends Controller
     {
 
         $detail = Cost::find($id);
-        $nccList = NhaCungCap::get();
+        $nccList = NhaCungCap::where('status', 1)->orWhere('id', $detail->ncc_id)->orderBy('display_order')->orderBy('name')->get();
         //$cateList = CostType::orderBy('display_order')->get();
         $partnerList = Partner::where('cost_type_id', $detail->cate_id)->get();
-        $cateList = CostType::orderBy('display_order')->get();
+        $cateList = CostType::where('status', 1)->orWhere('id', $detail->cate_id)->orderBy('display_order')->get();
+        $ingredientList = Ingredient::active()->orderBy('name')->get();
+        $details = $detail->details()->with('ingredient')->orderBy('id')->get();
 
         $bankInfoList = BankInfo::all();
         $vietNameBanks = \App\Helpers\Helper::getVietNamBanks();
         $branchList = Branch::where('status', 1)->orderBy('display_order')->get();
-        return view('cost.edit', compact( 'detail', 'cateList', 'partnerList', 'bankInfoList', 'vietNameBanks', 'branchList', 'nccList'));
+        return view('cost.edit', compact( 'detail', 'cateList', 'partnerList', 'bankInfoList', 'vietNameBanks', 'branchList', 'nccList', 'ingredientList', 'details'));
     }
     public function copy($id)
     {
 
         $detail = Cost::find($id);
-        $cateList = CostType::orderBy('display_order')->get();
+        $cateList = CostType::where('status', 1)->orderBy('display_order')->get();
         $partnerList = Partner::where('cost_type_id', $detail->cate_id)->get();
         $bankInfoList = BankInfo::all();
         $vietNameBanks = \App\Helpers\Helper::getVietNamBanks();
-        return view('cost.copy', compact( 'detail', 'cateList', 'partnerList', 'bankInfoList', 'vietNameBanks'));
+        $branchList = Branch::where('status', 1)->orderBy('display_order')->get();
+        $nccList = NhaCungCap::where('status', 1)->orderBy('display_order')->orderBy('name')->get();
+        $ingredientList = Ingredient::active()->orderBy('name')->get();
+        // Copy bill -> copy luôn dòng chi tiết (bỏ id để lưu thành dòng mới)
+        $details = $detail->details()->orderBy('id')->get()->map(function ($d) {
+            return ['ingredient_id' => $d->ingredient_id, 'quantity' => $d->quantity, 'unit' => $d->unit,
+                    'unit_price' => $d->unit_price, 'amount' => $d->amount, 'notes' => $d->notes, 'need_review' => 0];
+        });
+        return view('cost.copy', compact( 'detail', 'cateList', 'partnerList', 'bankInfoList', 'vietNameBanks', 'branchList', 'nccList', 'ingredientList', 'details'));
     }
     /**
     * Remove the specified resource from storage.
@@ -564,6 +584,398 @@ class CostController extends Controller
     * @param  int  $id
     * @return Response
     */
+    /**
+    * Lưu các dòng hàng (cost_detail) của 1 bill.
+    * - Chỉ xử lý khi form có gửi bảng chi tiết (details_submitted=1) để không xóa nhầm dữ liệu từ form khác.
+    * - Dòng có id -> cập nhật, dòng mới -> thêm, dòng bị xóa trên form -> xóa.
+    * - detail_total = tổng tiền các dòng; detail_check = 1 khi tổng dòng khác tổng bill (vẫn cho lưu).
+    */
+    private function saveDetails(Cost $cost, $rows)
+    {
+        if(request()->input('details_submitted') != 1){
+            // Form không có bảng chi tiết: giữ nguyên dòng, chỉ đối chiếu lại với Total mới
+            if($cost->detail_total !== null){
+                $cost->detail_check = ((int) $cost->detail_total != (int) $cost->total_money) ? 1 : 0;
+                $cost->save();
+            }
+            return;
+        }
+        CostDetailService::saveRows($cost, $rows, Auth::user()->id, 1);
+    }
+
+    private function toNumber($value, $decimal = false)
+    {
+        return CostDetailService::toNumber($value, $decimal);
+    }
+
+    /**
+    * Báo cáo nhập hàng theo nguyên liệu (cost_detail).
+    */
+    public function nhapHang(Request $request)
+    {
+        // Kỳ thống kê: week | month | year | custom (custom = ô từ ngày - đến ngày)
+        $period = in_array($request->period, ['week', 'month', 'year', 'custom']) ? $request->period
+            : ($request->use_date_from || $request->use_date_to ? 'custom' : 'month');
+        $anchor = $request->date && strtotime($request->date) ? strtotime($request->date) : time();
+        $prevAnchor = $nextAnchor = null;
+        if($period == 'week'){
+            $fromDate = date('Y-m-d', strtotime('monday this week', $anchor));
+            $toDate = date('Y-m-d', strtotime($fromDate.' +6 days'));
+            $prevFrom = date('Y-m-d', strtotime($fromDate.' -7 days'));
+            $prevTo = date('Y-m-d', strtotime($fromDate.' -1 day'));
+            $periodLabel = __('Tuần').' '.date('d/m', strtotime($fromDate)).' - '.date('d/m/Y', strtotime($toDate));
+            $prevAnchor = $prevFrom;
+            $nextAnchor = date('Y-m-d', strtotime($fromDate.' +7 days'));
+        }elseif($period == 'month'){
+            $fromDate = date('Y-m-01', $anchor);
+            $toDate = date('Y-m-t', $anchor);
+            $prevFrom = date('Y-m-01', strtotime($fromDate.' -1 month'));
+            $prevTo = date('Y-m-t', strtotime($prevFrom));
+            $periodLabel = __('Tháng').' '.date('m/Y', $anchor);
+            $prevAnchor = $prevFrom;
+            $nextAnchor = date('Y-m-01', strtotime($fromDate.' +1 month'));
+        }elseif($period == 'year'){
+            $fromDate = date('Y-01-01', $anchor);
+            $toDate = date('Y-12-31', $anchor);
+            $prevFrom = date('Y-01-01', strtotime($fromDate.' -1 year'));
+            $prevTo = date('Y-12-31', strtotime($prevFrom));
+            $periodLabel = __('Năm').' '.date('Y', $anchor);
+            $prevAnchor = $prevFrom;
+            $nextAnchor = date('Y-01-01', strtotime($fromDate.' +1 year'));
+        }else{
+            $fromDate = $this->toSqlDate($request->use_date_from ?: date('01/m/Y')) ?: date('Y-m-01');
+            $toDate = $this->toSqlDate($request->use_date_to ?: date('t/m/Y')) ?: date('Y-m-t');
+            if($toDate < $fromDate){
+                $toDate = $fromDate;
+            }
+            $days = (int) round((strtotime($toDate) - strtotime($fromDate)) / 86400) + 1;
+            $prevFrom = date('Y-m-d', strtotime($fromDate.' -'.$days.' days'));
+            $prevTo = date('Y-m-d', strtotime($fromDate.' -1 day'));
+            $periodLabel = date('d/m/Y', strtotime($fromDate)).' - '.date('d/m/Y', strtotime($toDate));
+        }
+        $from = date('d/m/Y', strtotime($fromDate));
+        $to = date('d/m/Y', strtotime($toDate));
+        $sort = $request->sort == 'qty' ? 'qty' : 'amount';
+        $arrSearch = [
+            'period' => $period,
+            'sort' => $sort,
+            'use_date_from' => $from,
+            'use_date_to' => $to,
+            'branch_ids' => $request->branch_ids ? (array) $request->branch_ids : [],
+            'ncc_id' => $request->ncc_id ?? null,
+            'cate_id' => $request->cate_id ?? null,
+            'ingredient_id' => $request->ingredient_id ?? null,
+            'include_review' => $request->include_review ? 1 : 0,
+        ];
+
+        $makeBase = function ($f, $t) use ($arrSearch) {
+            $q = DB::table('cost_detail as d')
+                ->join('cost as c', 'c.id', '=', 'd.cost_id')
+                ->leftJoin('ingredient as i', 'i.id', '=', 'd.ingredient_id')
+                ->where('c.status', '>', 0)
+                ->where('c.date_use', '>=', $f)
+                ->where('c.date_use', '<=', $t);
+            if($arrSearch['branch_ids']){
+                $q->whereIn('c.branch_id', $arrSearch['branch_ids']);
+            }
+            if($arrSearch['ncc_id']){
+                $q->where('c.ncc_id', $arrSearch['ncc_id']);
+            }
+            if($arrSearch['cate_id']){
+                $q->where('i.cost_type_id', $arrSearch['cate_id']);
+            }
+            return $q;
+        };
+        $base = $makeBase($fromDate, $toDate);
+        $reviewRows = (clone $base)->where('d.need_review', 1)->count();
+        if(!$arrSearch['include_review']){
+            $base->where('d.need_review', 0);
+        }
+
+        // Tổng hợp theo nguyên liệu. Số lượng chỉ cộng các dòng cùng ĐVT chuẩn của nguyên liệu.
+        $sameUnit = "(d.unit IS NULL OR d.unit = '' OR d.unit = i.unit)";
+        $items = (clone $base)
+            ->select(
+                'd.ingredient_id', 'i.name', 'i.unit', 'i.cost_type_id',
+                DB::raw("SUM(CASE WHEN $sameUnit THEN d.quantity END) as qty"),
+                DB::raw('SUM(d.amount) as amount'),
+                DB::raw("SUM(CASE WHEN $sameUnit AND d.quantity > 0 AND d.amount > 0 THEN d.amount END) as amount_has_qty"),
+                DB::raw("SUM(CASE WHEN $sameUnit AND d.quantity > 0 AND d.amount > 0 THEN d.quantity END) as qty_has_amount"),
+                DB::raw('COUNT(DISTINCT d.cost_id) as bills'),
+                DB::raw('COUNT(*) as line_count'),
+                DB::raw('SUM(d.need_review) as review_lines')
+            )
+            ->groupBy('d.ingredient_id', 'i.name', 'i.unit', 'i.cost_type_id')
+            ->orderBy('amount', 'desc')
+            ->get();
+        if($sort == 'qty'){
+            $items = $items->sortByDesc(function ($it) { return [(float) $it->qty, (float) $it->amount]; })->values();
+        }
+        $totalAmount = $items->sum('amount');
+
+        // Kỳ trước (cùng bộ lọc) để so sánh
+        $prevBase = $makeBase($prevFrom, $prevTo);
+        if(!$arrSearch['include_review']){
+            $prevBase->where('d.need_review', 0);
+        }
+        $prevMap = [];
+        foreach($prevBase->select('d.ingredient_id',
+                DB::raw("SUM(CASE WHEN $sameUnit THEN d.quantity END) as qty"),
+                DB::raw('SUM(d.amount) as amount'))
+            ->groupBy('d.ingredient_id')->get() as $p){
+            $prevMap[$p->ingredient_id ?: 'none'] = $p;
+        }
+        $prevTotal = 0;
+        foreach($prevMap as $p){ $prevTotal += (float) $p->amount; }
+
+        // Chi tiết từng dòng khi chọn 1 nguyên liệu ('none' = dòng chưa gắn nguyên liệu)
+        $lines = collect();
+        if($arrSearch['ingredient_id']){
+            $q = (clone $base)->select('d.*', 'c.date_use', 'c.branch_id', 'c.ncc_id', 'c.total_money', 'c.detail_check', 'i.name as ingredient_name', 'i.unit as ingredient_unit');
+            if($arrSearch['ingredient_id'] == 'none'){
+                $q->whereNull('d.ingredient_id');
+            }else{
+                $q->where('d.ingredient_id', $arrSearch['ingredient_id']);
+            }
+            $lines = $q->orderBy('c.date_use')->orderBy('d.cost_id')->get();
+        }
+
+        // Độ phủ dữ liệu: bill nhóm "Giá vốn" trong kỳ có / chưa có chi tiết
+        $cover = DB::table('cost as c')
+            ->join('cost_type as t', 't.id', '=', 'c.cate_id')
+            ->where('c.status', '>', 0)
+            ->where('t.group_name', 'like', 'Giá vốn%')
+            ->where('c.date_use', '>=', $fromDate)
+            ->where('c.date_use', '<=', $toDate);
+        if($arrSearch['branch_ids']){
+            $cover->whereIn('c.branch_id', $arrSearch['branch_ids']);
+        }
+        if($arrSearch['ncc_id']){
+            $cover->where('c.ncc_id', $arrSearch['ncc_id']);
+        }
+        $coverage = $cover->select(
+                DB::raw('COUNT(*) as bills'),
+                DB::raw('SUM(c.total_money) as money'),
+                DB::raw('SUM(CASE WHEN EXISTS (SELECT 1 FROM cost_detail x WHERE x.cost_id = c.id) THEN 1 ELSE 0 END) as bills_detail'),
+                DB::raw('SUM(CASE WHEN EXISTS (SELECT 1 FROM cost_detail x WHERE x.cost_id = c.id) THEN c.total_money ELSE 0 END) as money_detail'),
+                DB::raw('SUM(c.detail_check) as bills_check')
+            )->first();
+
+        $cateList = CostType::where('status', 1)->orderBy('display_order')->get();
+        $cateArr = $cateList->pluck('name', 'id');
+        $branchList = Branch::where('status', 1)->orderBy('display_order')->get();
+        $beachArr = $branchList->pluck('name', 'id');
+        $nccList = NhaCungCap::where('status', 1)->orderBy('display_order')->orderBy('name')->get();
+        $nccArr = NhaCungCap::pluck('name', 'id');
+        $ingredientList = Ingredient::orderBy('name')->get();
+
+        return view('cost.nhap-hang', compact('items', 'lines', 'totalAmount', 'reviewRows', 'coverage', 'arrSearch',
+            'cateList', 'cateArr', 'branchList', 'beachArr', 'nccList', 'nccArr', 'ingredientList',
+            'period', 'periodLabel', 'prevAnchor', 'nextAnchor', 'prevFrom', 'prevTo', 'prevMap', 'prevTotal', 'sort', 'fromDate'));
+    }
+
+    /**
+     * Biểu đồ giá nguyên liệu: giá theo từng lần nhập (mỗi bill = 1 điểm) hoặc bình quân theo ngày.
+     * Đơn giá = thành tiền / số lượng, chỉ lấy dòng có SL > 0, tiền > 0 và đúng ĐVT chuẩn của nguyên liệu.
+     */
+    public function bieuDoGia(Request $request)
+    {
+        $from = $request->use_date_from ? $request->use_date_from : date('d/m/Y', strtotime('-6 months'));
+        $to = $request->use_date_to ? $request->use_date_to : date('d/m/Y');
+        $fromDate = $this->toSqlDate($from) ?: date('Y-m-d', strtotime('-6 months'));
+        $toDate = $this->toSqlDate($to) ?: date('Y-m-d');
+        if($toDate < $fromDate){
+            $toDate = $fromDate;
+            $to = $from;
+        }
+        $ingredientIds = array_values(array_unique(array_filter(array_map('intval', (array) $request->ingredient_ids))));
+        $ingredientIds = array_slice($ingredientIds, 0, 5);
+        $arrSearch = [
+            'use_date_from' => $from,
+            'use_date_to' => $to,
+            'ingredient_ids' => $ingredientIds,
+            'branch_ids' => $request->branch_ids ? array_map('intval', (array) $request->branch_ids) : [],
+            'ncc_id' => $request->ncc_id ? (int) $request->ncc_id : null,
+            'include_review' => $request->include_review ? 1 : 0,
+            'mode' => $request->mode == 'ngay' ? 'ngay' : 'lan',
+            'by_ncc' => ($request->by_ncc && count($ingredientIds) == 1) ? 1 : 0,
+        ];
+
+        $ingredientList = Ingredient::orderBy('name')->get();
+        $ingArr = $ingredientList->keyBy('id');
+        $branchList = Branch::where('status', 1)->orderBy('display_order')->get();
+        $beachArr = $branchList->pluck('name', 'id');
+        $nccList = NhaCungCap::where('status', 1)->orderBy('display_order')->orderBy('name')->get();
+        $nccArr = NhaCungCap::pluck('name', 'id');
+
+        $series = [];
+        $history = [];
+        $summary = [];
+        $skipped = ['unit' => 0, 'zero' => 0, 'review' => 0];
+
+        if($ingredientIds){
+            $base = DB::table('cost_detail as d')
+                ->join('cost as c', 'c.id', '=', 'd.cost_id')
+                ->join('ingredient as i', 'i.id', '=', 'd.ingredient_id')
+                ->where('c.status', '>', 0)
+                ->whereIn('d.ingredient_id', $ingredientIds)
+                ->where('c.date_use', '>=', $fromDate)
+                ->where('c.date_use', '<=', $toDate);
+            if($arrSearch['branch_ids']){
+                $base->whereIn('c.branch_id', $arrSearch['branch_ids']);
+            }
+            if($arrSearch['ncc_id']){
+                $base->where('c.ncc_id', $arrSearch['ncc_id']);
+            }
+
+            $sameUnit = "(d.unit IS NULL OR d.unit = '' OR d.unit = i.unit)";
+            $skipped['review'] = $arrSearch['include_review'] ? 0 : (clone $base)->where('d.need_review', 1)->count();
+            if(!$arrSearch['include_review']){
+                $base->where('d.need_review', 0);
+            }
+            $skipped['unit'] = (clone $base)->whereRaw("NOT $sameUnit")->count();
+            $skipped['zero'] = (clone $base)->whereRaw($sameUnit)
+                ->where(function($q){
+                    $q->whereNull('d.quantity')->orWhere('d.quantity', '<=', 0)
+                      ->orWhereNull('d.amount')->orWhere('d.amount', '<=', 0);
+                })->count();
+
+            // Gộp theo (bill, nguyên liệu): 1 bill có nhiều dòng cùng nguyên liệu (vd tỏi xay + tỏi lột) = 1 lần nhập
+            $rows = (clone $base)
+                ->whereRaw($sameUnit)
+                ->where('d.quantity', '>', 0)
+                ->where('d.amount', '>', 0)
+                ->select(
+                    'd.cost_id', 'd.ingredient_id', 'c.date_use', 'c.branch_id', 'c.ncc_id',
+                    DB::raw('SUM(d.quantity) as qty'),
+                    DB::raw('SUM(d.amount) as amount'),
+                    DB::raw('MAX(d.need_review) as need_review')
+                )
+                ->groupBy('d.cost_id', 'd.ingredient_id', 'c.date_use', 'c.branch_id', 'c.ncc_id')
+                ->orderBy('c.date_use')->orderBy('d.cost_id')
+                ->get();
+
+            // Lịch sử từng lần nhập + chênh lệch so với lần trước (cùng nguyên liệu)
+            $prev = [];
+            foreach($rows as $r){
+                $price = (float) $r->amount / (float) $r->qty;
+                $ingId = (int) $r->ingredient_id;
+                $p = $prev[$ingId] ?? null;
+                $history[] = [
+                    'cost_id' => (int) $r->cost_id,
+                    'ingredient_id' => $ingId,
+                    'date' => $r->date_use,
+                    'branch' => $beachArr[$r->branch_id] ?? '',
+                    'ncc_id' => (int) $r->ncc_id,
+                    'ncc' => $nccArr[$r->ncc_id] ?? '(Chưa có NCC)',
+                    'qty' => (float) $r->qty,
+                    'amount' => (int) $r->amount,
+                    'price' => $price,
+                    'diff' => $p !== null ? $price - $p : null,
+                    'diff_pct' => ($p !== null && $p > 0) ? ($price - $p) / $p * 100 : null,
+                    'need_review' => (int) $r->need_review,
+                ];
+                $prev[$ingId] = $price;
+            }
+
+            // Tóm tắt theo nguyên liệu
+            foreach($ingredientIds as $ingId){
+                $list = array_values(array_filter($history, function($h) use ($ingId){ return $h['ingredient_id'] == $ingId; }));
+                if(!$list){
+                    $summary[$ingId] = null;
+                    continue;
+                }
+                $prices = array_column($list, 'price');
+                $sumAmount = array_sum(array_column($list, 'amount'));
+                $sumQty = array_sum(array_column($list, 'qty'));
+                $first = $list[0];
+                $last = $list[count($list) - 1];
+                $minIdx = array_keys($prices, min($prices))[0];
+                $maxIdx = array_keys($prices, max($prices))[0];
+                $summary[$ingId] = [
+                    'count' => count($list),
+                    'min' => $list[$minIdx],
+                    'max' => $list[$maxIdx],
+                    'avg' => $sumQty > 0 ? $sumAmount / $sumQty : null,
+                    'first' => $first,
+                    'last' => $last,
+                    'change_pct' => $first['price'] > 0 ? ($last['price'] - $first['price']) / $first['price'] * 100 : null,
+                    'qty' => $sumQty,
+                    'amount' => $sumAmount,
+                ];
+            }
+
+            // Dữ liệu biểu đồ
+            $groups = [];
+            foreach($history as $h){
+                if($arrSearch['by_ncc']){
+                    $key = 'n' . $h['ncc_id'];
+                    $name = $h['ncc'];
+                }else{
+                    $key = 'i' . $h['ingredient_id'];
+                    $name = optional($ingArr->get($h['ingredient_id']))->name;
+                }
+                if(!isset($groups[$key])){
+                    $groups[$key] = ['name' => $name, 'unit' => optional($ingArr->get($h['ingredient_id']))->unit, 'items' => []];
+                }
+                $groups[$key]['items'][] = $h;
+            }
+            foreach($groups as $g){
+                $data = [];
+                if($arrSearch['mode'] == 'ngay'){
+                    $byDay = [];
+                    foreach($g['items'] as $h){
+                        $d = $h['date'];
+                        if(!isset($byDay[$d])) $byDay[$d] = ['qty' => 0, 'amount' => 0, 'bills' => [], 'ncc' => []];
+                        $byDay[$d]['qty'] += $h['qty'];
+                        $byDay[$d]['amount'] += $h['amount'];
+                        $byDay[$d]['bills'][] = 'CP' . $h['cost_id'];
+                        $byDay[$d]['ncc'][$h['ncc']] = 1;
+                    }
+                    foreach($byDay as $d => $v){
+                        $data[] = [
+                            'x' => strtotime($d . ' UTC') * 1000,
+                            'y' => round($v['amount'] / $v['qty']),
+                            'qty' => round($v['qty'], 3),
+                            'amount' => $v['amount'],
+                            'bill' => implode(', ', $v['bills']),
+                            'ncc' => implode(', ', array_keys($v['ncc'])),
+                            'branch' => '',
+                            'cost_id' => count($v['bills']) == 1 ? (int) substr($v['bills'][0], 2) : null,
+                        ];
+                    }
+                }else{
+                    foreach($g['items'] as $h){
+                        $data[] = [
+                            'x' => strtotime($h['date'] . ' UTC') * 1000,
+                            'y' => round($h['price']),
+                            'qty' => round($h['qty'], 3),
+                            'amount' => $h['amount'],
+                            'bill' => 'CP' . $h['cost_id'],
+                            'ncc' => $h['ncc'],
+                            'branch' => $h['branch'],
+                            'cost_id' => $h['cost_id'],
+                        ];
+                    }
+                }
+                $series[] = ['name' => $g['name'], 'unit' => $g['unit'], 'data' => $data];
+            }
+        }
+
+        // Lịch sử hiển thị mới nhất trước
+        $history = array_reverse($history);
+
+        return view('cost.bieu-do-gia', compact('arrSearch', 'ingredientList', 'ingArr', 'branchList', 'nccList',
+            'series', 'history', 'summary', 'skipped'));
+    }
+
+    private function toSqlDate($dmy)
+    {
+        $tmp = explode('/', (string) $dmy);
+        if(count($tmp) != 3 || !checkdate((int) $tmp[1], (int) $tmp[0], (int) $tmp[2])) return null;
+        return sprintf('%04d-%02d-%02d', $tmp[2], $tmp[1], $tmp[0]);
+    }
+
     public function destroy($id)
     {
         // delete
@@ -571,7 +983,7 @@ class CostController extends Controller
         $oldStatus = $model->status;
         $model->update(['status'=>0]);
         // redirect
-        Session::flash('message', 'Xóa thành công');
+        Session::flash('message', __('Xóa thành công'));
         return redirect()->route('cost.index');
     }
 }
