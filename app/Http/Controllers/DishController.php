@@ -59,7 +59,7 @@ class DishController extends Controller
         if ($column === 'price') {
             $value = str_replace(",", "", (string) $value);
             if (!is_numeric($value) || $value < 1000) {
-                return response()->json(['error' => self::PRICE_MSG], 422);
+                return response()->json(['error' => __(self::PRICE_MSG)], 422);
             }
         }
         $model = Dish::find($id);
@@ -100,8 +100,8 @@ class DishController extends Controller
         [
             'name.required' => 'Please fill name',            
             'price.required' => 'Please fill price',            
-            'price.numeric' => self::PRICE_MSG,
-            'price.min' => self::PRICE_MSG,
+            'price.numeric' => __(self::PRICE_MSG),
+            'price.min' => __(self::PRICE_MSG),
         ]);
         
         $dataArr['price'] = str_replace(",", "", $dataArr['price']);
@@ -176,8 +176,8 @@ class DishController extends Controller
         [
             'name.required' => 'Please fill name',            
             'price.required' => 'Please fill price',            
-            'price.numeric' => self::PRICE_MSG,
-            'price.min' => self::PRICE_MSG,
+            'price.numeric' => __(self::PRICE_MSG),
+            'price.min' => __(self::PRICE_MSG),
         ]);
         if($dataArr['image_url'] && $dataArr['image_name']){
 

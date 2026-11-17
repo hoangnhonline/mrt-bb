@@ -813,5 +813,16 @@
     "Ghi nhận chi hoa hồng": "Record commission payment",
     "Cọc": "Deposit",
     "Rupees": "Rupees",
-    "Thanh toán": "Payable"
+    "Thanh toán": "Payable",
+    "Giá món ăn đang dưới 1.000đ — nhập sai. Bạn phải kiểm tra lại và thêm 000 cho đúng (ví dụ: 80 → 80,000).": "The dish price is below 1,000 VND — wrong entry. Please check again and add 000 to correct it (e.g. 80 → 80,000).",
+    "CẢNH BÁO: ĐƠN TÍNH SAI GIÁ": "WARNING: WRONG PRICE ON THIS BILL",
+    "Giá món dưới 1.000đ, kiểm tra lại và thêm 000 cho đúng.": "Dish price below 1,000 VND, please check and add 000 to correct it.",
+    "buffet NL": "adult buffet",
+    "buffet TE": "child buffet",
+    "Buffet người lớn (đ / khách)": "Adult buffet (VND / guest)",
+    "Buffet trẻ em – món có chữ \"TE\" (đ / khách)": "Child buffet – dishes with \"TE\" (VND / guest)",
+    "Chỉ tính lại hoa hồng bill cũ (giữ mức riêng của từng đối tác)": "Only recalculate old bills (keep each partner's rates)",
+    "Tính lại hoa hồng các bill cũ của đối tác? Bill đã sửa tay tiền chiết khấu được giữ nguyên.": "Recalculate commission on old partner bills? Bills with a manually edited amount are kept.",
+    "Mức buffet trẻ em áp dụng chung cho mọi đối tác.": "The child buffet rate applies to all partners.",
+    "đã tính lại :n bill": "recalculated :n bills"
 }

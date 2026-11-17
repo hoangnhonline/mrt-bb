@@ -12,4 +12,6 @@ return [
     // Hoa hồng đối tác mặc định (dùng khi chưa có cài đặt trong bảng settings)
     'com_alacarte_pct_default' => 15,
     'com_buffet_per_pax_default' => 20000,
+    // Hoa hồng buffet trẻ em (món buffet có chữ "TE"), đ/khách — áp dụng chung mọi đối tác
+    'com_buffet_child_per_pax_default' => 10000,
 ];
